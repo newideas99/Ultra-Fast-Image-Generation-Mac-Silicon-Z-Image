@@ -12,6 +12,13 @@
 
 ## Benchmarks
 
+### Mac M1 Max (64GB)
+
+| Resolution | Steps | Time | Speed |
+|------------|-------|------|-------|
+| 512x512 | 7 | **23s** | 3.38s/step |
+| 768x768 | 7 | **49s** | 7.13s/step |
+
 ### Mac M2 Max (32GB)
 
 | Resolution | Steps | Time | Speed |
