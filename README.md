@@ -8,6 +8,7 @@
 - **Tiny Model**: Only 3.5GB (4-bit quantized from 24GB)
 - **Runs Locally**: No API keys, no cloud costs
 - **Gradio UI**: Simple web interface included
+- **LoRA Support**: Load custom LoRA adapters to customize the style
 - **CUDA Support**: Experimental support for NVIDIA GPUs
 
 ## Benchmarks
@@ -91,17 +92,45 @@ Options:
 - `--steps`: Inference steps (default: 5)
 - `--seed`: Random seed (-1 for random)
 - `--output`: Output file path (default: output.png)
+- `--lora`: Path to LoRA safetensors file
+- `--lora-strength`: LoRA strength multiplier (default: 1.0)
 
 Example:
 ```bash
 python generate.py "Cyberpunk city at night, neon lights" --height 768 --width 768 --steps 7 --seed 42 --output cyberpunk.png
 ```
 
+With LoRA:
+```bash
+python generate.py "A portrait in anime style" --lora /path/to/anime-lora.safetensors --lora-strength 0.8
+```
+
+## LoRA Support
+
+You can use LoRA (Low-Rank Adaptation) files to customize the model's style without retraining.
+
+### In the Web UI
+1. Click the "LoRA File" upload area
+2. Browse to select any `.safetensors` LoRA file from your computer
+3. Adjust the strength slider (1.0 = full effect, 0.5 = half effect)
+4. Generate images as normal
+
+### Supported Formats
+- Standard LoRA (`.safetensors`)
+- PEFT format LoRAs
+- LoRAs trained with ai-toolkit/zimagetrain
+
+### Notes
+- LoRA works with the quantized model - no extra memory needed beyond the LoRA file size
+- You can change LoRA strength without reloading
+- Click "Clear LoRA" to remove the current adapter
+
 ## Performance Tips
 
 - **Resolution**: 512x512 is fastest. 768x768 is good quality/speed balance.
 - **Steps**: 5 steps is usually enough for good results. More steps = slower.
 - **First run**: First generation is slower due to model loading (~30-60s). Subsequent generations are faster.
+- **LoRA**: Loading a LoRA adds a small overhead on first use, but subsequent generations are the same speed.
 
 ## Requirements
 
