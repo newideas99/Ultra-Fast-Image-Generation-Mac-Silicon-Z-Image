@@ -2,6 +2,7 @@
 Z-Image Turbo UINT4 - Fast Image Generation on Mac
 
 Uses the quantized uint4 model (only 3.5GB!) for fast inference on Apple Silicon.
+Now with LoRA support!
 """
 
 import os
@@ -16,6 +17,8 @@ import torch
 import sdnq
 
 from diffusers import ZImagePipeline
+
+from lora_zimage import load_lora_for_pipeline, LoRANetwork
 
 
 def load_pipeline(device="mps"):
@@ -54,12 +57,21 @@ def generate(
     width: int = 512,
     steps: int = 5,
     seed: int = None,
+    device: str = "mps",
 ):
     """Generate an image from a prompt."""
     if seed is None:
         seed = torch.randint(0, 2**32, (1,)).item()
 
     print(f"Generating with seed {seed}...")
+
+    # Use appropriate generator for device
+    if device == "cuda":
+        generator = torch.Generator("cuda").manual_seed(seed)
+    elif device == "mps":
+        generator = torch.Generator("mps").manual_seed(seed)
+    else:
+        generator = torch.Generator().manual_seed(seed)
 
     with torch.inference_mode():
         image = pipe(
@@ -68,7 +80,7 @@ def generate(
             width=width,
             num_inference_steps=steps,
             guidance_scale=0.0,
-            generator=torch.Generator("mps").manual_seed(seed),
+            generator=generator,
         ).images[0]
 
     return image, seed
@@ -82,10 +94,46 @@ def main():
     parser.add_argument("--steps", type=int, default=5, help="Inference steps (default: 5)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--output", type=str, default="output.png", help="Output path")
+    parser.add_argument("--device", type=str, default="mps", help="Device (mps, cuda, cpu)")
+
+    # LoRA arguments
+    parser.add_argument("--lora", type=str, default=None, help="Path to LoRA safetensors file")
+    parser.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength (default: 1.0)")
 
     args = parser.parse_args()
 
-    pipe = load_pipeline()
+    # Determine device
+    device = args.device
+    if device == "mps" and not torch.backends.mps.is_available():
+        print("MPS not available, falling back to CPU")
+        device = "cpu"
+    elif device == "cuda" and not torch.cuda.is_available():
+        print("CUDA not available, falling back to CPU")
+        device = "cpu"
+
+    pipe = load_pipeline(device)
+
+    # Load LoRA if specified
+    lora_network = None
+    if args.lora:
+        if not os.path.exists(args.lora):
+            print(f"Error: LoRA file not found: {args.lora}")
+            return
+
+        print(f"Loading LoRA: {args.lora} (strength={args.lora_strength})")
+        try:
+            lora_network = load_lora_for_pipeline(
+                pipe,
+                args.lora,
+                multiplier=args.lora_strength,
+                device=device,
+                dtype=torch.float32,
+            )
+            print("LoRA loaded successfully!")
+        except Exception as e:
+            print(f"Error loading LoRA: {e}")
+            return
+
     image, seed = generate(
         pipe,
         args.prompt,
@@ -93,10 +141,12 @@ def main():
         args.width,
         args.steps,
         args.seed,
+        device,
     )
 
     image.save(args.output)
-    print(f"Saved to {args.output} (seed: {seed})")
+    lora_info = f", LoRA: {os.path.basename(args.lora)}" if args.lora else ""
+    print(f"Saved to {args.output} (seed: {seed}{lora_info})")
 
 
 if __name__ == "__main__":
