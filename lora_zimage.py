@@ -98,10 +98,9 @@ class LoRAModule(nn.Module):
             return org_output
 
         # Compute LoRA contribution
-        # Need to handle potential dtype mismatches with quantized models
+        # The input x is already a regular tensor (not quantized) - the quantized
+        # weights are inside the original module, not the input
         lora_input = x
-        if hasattr(x, 'dequantize'):
-            lora_input = x.dequantize()
 
         # Cast to LoRA weight dtype for computation
         lora_dtype = self.lora_down.weight.dtype

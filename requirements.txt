@@ -11,3 +11,4 @@ sdnq @ git+https://github.com/Disty0/sdnq.git
 gradio>=6.0.0
 pillow
 peft>=0.17.0
+scipy

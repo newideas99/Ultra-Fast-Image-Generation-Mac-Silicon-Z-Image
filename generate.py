@@ -12,25 +12,28 @@ import argparse
 os.environ["PYTORCH_MPS_FAST_MATH"] = "1"
 
 import torch
-
-# Import sdnq FIRST - it registers quantization format with diffusers
-import sdnq
-
-from diffusers import ZImagePipeline
-
-from lora_zimage import load_lora_for_pipeline, LoRANetwork
+from diffusers import ZImagePipeline, FlowMatchEulerDiscreteScheduler
 
 
 def load_pipeline(device="mps"):
-    """Load the quantized Z-Image pipeline."""
-    print("Loading Z-Image-Turbo UINT4 (3.5GB model)...")
+    """Load the full-precision Z-Image pipeline."""
+    print("Loading Z-Image-Turbo (full precision)...")
     print(f"MPS available: {torch.backends.mps.is_available()}")
     print(f"PyTorch version: {torch.__version__}")
 
+    # Use bfloat16 for better quality
+    dtype = torch.bfloat16 if device in ["mps", "cuda"] else torch.float32
+
     pipe = ZImagePipeline.from_pretrained(
-        "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32",
-        torch_dtype=torch.float32,
+        "Tongyi-MAI/Z-Image-Turbo",
+        torch_dtype=dtype,
         low_cpu_mem_usage=True,
+    )
+
+    # Use Euler with beta sigmas for cleaner images
+    pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+        pipe.scheduler.config,
+        use_beta_sigmas=True,
     )
 
     pipe.to(device)
@@ -113,8 +116,7 @@ def main():
 
     pipe = load_pipeline(device)
 
-    # Load LoRA if specified
-    lora_network = None
+    # Load LoRA if specified (using native diffusers support)
     if args.lora:
         if not os.path.exists(args.lora):
             print(f"Error: LoRA file not found: {args.lora}")
@@ -122,13 +124,8 @@ def main():
 
         print(f"Loading LoRA: {args.lora} (strength={args.lora_strength})")
         try:
-            lora_network = load_lora_for_pipeline(
-                pipe,
-                args.lora,
-                multiplier=args.lora_strength,
-                device=device,
-                dtype=torch.float32,
-            )
+            pipe.load_lora_weights(args.lora, adapter_name="default")
+            pipe.set_adapters(["default"], adapter_weights=[args.lora_strength])
             print("LoRA loaded successfully!")
         except Exception as e:
             print(f"Error loading LoRA: {e}")

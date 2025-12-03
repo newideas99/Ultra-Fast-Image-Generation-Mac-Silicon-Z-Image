@@ -1,25 +1,23 @@
 """
-Z-Image Turbo UINT4 - Gradio Web Interface
+Z-Image Turbo - Gradio Web Interface
 
-Fast image generation on Apple Silicon using the quantized uint4 model.
-Now with LoRA support!
+Fast image generation on Apple Silicon.
+Uses quantized model for speed, full model when LoRA is loaded.
 """
 
 import os
 os.environ["PYTORCH_MPS_FAST_MATH"] = "1"
 
 import torch
-import sdnq
+import sdnq  # Required for quantized model
 import gradio as gr
-from diffusers import ZImagePipeline
+from diffusers import ZImagePipeline, FlowMatchEulerDiscreteScheduler
 
-from lora_zimage import load_lora_for_pipeline, LoRANetwork
-
-# Global pipeline, device, and LoRA state
+# Global pipeline, device, and model state
 pipe = None
 current_device = None
-current_lora: LoRANetwork = None
 current_lora_path = None
+current_model_type = None  # "quantized" or "full"
 
 
 def get_available_devices():
@@ -33,29 +31,45 @@ def get_available_devices():
     return devices
 
 
-def load_pipeline(device="mps"):
-    """Load the pipeline (cached globally)."""
-    global pipe, current_device
+def load_pipeline(device="mps", use_full_model=False):
+    """Load the pipeline (cached globally). Switches between quantized and full model."""
+    global pipe, current_device, current_model_type, current_lora_path
 
-    # Reload if device changed
-    if pipe is not None and current_device == device:
+    model_type = "full" if use_full_model else "quantized"
+
+    # Return cached pipeline if same device and model type
+    if pipe is not None and current_device == device and current_model_type == model_type:
         return pipe
 
+    # Need to reload - clear existing pipeline
     if pipe is not None:
-        print(f"Switching device from {current_device} to {device}...")
+        print(f"Switching from {current_model_type} to {model_type} model...")
         del pipe
+        current_lora_path = None  # Reset LoRA state when switching models
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    print(f"Loading Z-Image-Turbo UINT4 on {device}...")
+    if use_full_model:
+        print(f"Loading Z-Image-Turbo (full precision) on {device}...")
+        dtype = torch.bfloat16 if device in ["mps", "cuda"] else torch.float32
+        pipe = ZImagePipeline.from_pretrained(
+            "Tongyi-MAI/Z-Image-Turbo",
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+        )
+    else:
+        print(f"Loading Z-Image-Turbo UINT4 (quantized) on {device}...")
+        dtype = torch.float16 if device == "cuda" else torch.float32
+        pipe = ZImagePipeline.from_pretrained(
+            "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32",
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+        )
 
-    # Use float16 for CUDA, float32 for MPS/CPU
-    dtype = torch.float16 if device == "cuda" else torch.float32
-
-    pipe = ZImagePipeline.from_pretrained(
-        "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32",
-        torch_dtype=dtype,
-        low_cpu_mem_usage=True,
+    # Use Euler with beta sigmas for cleaner images
+    pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+        pipe.scheduler.config,
+        use_beta_sigmas=True,
     )
 
     pipe.to(device)
@@ -68,20 +82,20 @@ def load_pipeline(device="mps"):
         pipe.vae.enable_tiling()
 
     current_device = device
-    print(f"Pipeline loaded on {device}!")
+    current_model_type = model_type
+    print(f"Pipeline loaded on {device}! (Model: {model_type})")
     return pipe
 
 
 def load_lora(lora_file, lora_strength: float, device: str):
-    """Load or update LoRA adapter."""
-    global current_lora, current_lora_path, pipe
+    """Load or update LoRA adapter using native diffusers support."""
+    global current_lora_path, pipe
 
     # Handle no file selected
     if lora_file is None or lora_file == "":
-        if current_lora is not None:
-            print("Removing current LoRA...")
-            current_lora.remove()
-            current_lora = None
+        if current_lora_path is not None:
+            print("Unloading current LoRA...")
+            pipe.unload_lora_weights()
             current_lora_path = None
         return "No LoRA loaded"
 
@@ -94,56 +108,54 @@ def load_lora(lora_file, lora_strength: float, device: str):
     if not lora_path.endswith('.safetensors'):
         return "Please select a .safetensors file"
 
-    # Make sure pipeline is loaded
-    pipe = load_pipeline(device)
-
-    # If same LoRA, just update multiplier
-    if current_lora is not None and current_lora_path == lora_path:
-        current_lora.multiplier = lora_strength
+    # If same LoRA, just update scale
+    if current_lora_path == lora_path:
+        pipe.set_adapters(["default"], adapter_weights=[lora_strength])
         return f"Updated LoRA strength to {lora_strength}"
 
-    # Remove old LoRA if exists
-    if current_lora is not None:
-        print(f"Removing previous LoRA: {current_lora_path}")
-        current_lora.remove()
-        current_lora = None
+    # Unload old LoRA if exists
+    if current_lora_path is not None:
+        print(f"Unloading previous LoRA: {current_lora_path}")
+        pipe.unload_lora_weights()
 
-    # Load new LoRA
+    # Load new LoRA using native diffusers support
     try:
         lora_name = os.path.basename(lora_path)
         print(f"Loading LoRA: {lora_path}")
-        current_lora = load_lora_for_pipeline(
-            pipe,
-            lora_path,
-            multiplier=lora_strength,
-            device=device,
-            dtype=torch.float32,  # float32 for MPS compatibility
-        )
+        pipe.load_lora_weights(lora_path, adapter_name="default")
+        pipe.set_adapters(["default"], adapter_weights=[lora_strength])
         current_lora_path = lora_path
         return f"Loaded LoRA: {lora_name} (strength={lora_strength})"
     except Exception as e:
-        current_lora = None
         current_lora_path = None
         return f"Error loading LoRA: {str(e)}"
 
 
 def update_lora_strength(strength: float):
-    """Update the LoRA multiplier without reloading."""
-    global current_lora
-    if current_lora is not None:
-        current_lora.multiplier = strength
-        return f"LoRA strength updated to {strength}"
+    """Update the LoRA strength without reloading."""
+    global pipe, current_lora_path
+    if current_lora_path is not None and pipe is not None:
+        try:
+            pipe.set_adapters(["default"], adapter_weights=[strength])
+            return f"LoRA strength updated to {strength}"
+        except Exception as e:
+            return f"Error updating strength: {str(e)}"
     return "No LoRA loaded"
 
 
-def generate_image(prompt, height, width, steps, seed, device, lora_file, lora_strength):
+def generate_image(prompt, height, width, steps, seed, guidance, device, lora_file, lora_strength):
     """Generate an image from the prompt."""
-    global current_lora
+    global pipe
 
-    pipe = load_pipeline(device)
+    # Determine if we need full model (LoRA selected) or quantized (no LoRA)
+    use_lora = lora_file is not None and lora_file != ""
 
-    # Handle LoRA loading/updating
-    lora_status = load_lora(lora_file, lora_strength, device)
+    # Load appropriate pipeline
+    pipe = load_pipeline(device, use_full_model=use_lora)
+
+    # Handle LoRA loading/updating (only if using full model)
+    if use_lora:
+        lora_status = load_lora(lora_file, lora_strength, device)
 
     if seed == -1:
         seed = torch.randint(0, 2**32, (1,)).item()
@@ -162,23 +174,24 @@ def generate_image(prompt, height, width, steps, seed, device, lora_file, lora_s
             height=int(height),
             width=int(width),
             num_inference_steps=int(steps),
-            guidance_scale=0.0,
+            guidance_scale=float(guidance),
             generator=generator,
         ).images[0]
 
     lora_name = os.path.basename(lora_file) if lora_file else None
     lora_info = f" | LoRA: {lora_name} ({lora_strength})" if lora_name else ""
-    return image, f"Seed: {seed} | Device: {device}{lora_info}"
+    model_info = "full" if use_lora else "quant"
+    cfg_info = f" | CFG: {guidance}" if guidance > 0 else ""
+    return image, f"Seed: {seed} | Model: {model_info} | Device: {device}{cfg_info}{lora_info}"
 
 
 def clear_lora():
     """Clear the current LoRA."""
-    global current_lora, current_lora_path
-    if current_lora is not None:
-        current_lora.remove()
-        current_lora = None
+    global current_lora_path, pipe
+    if current_lora_path is not None and pipe is not None:
+        pipe.unload_lora_weights()
         current_lora_path = None
-    return None, "LoRA cleared"
+    return None, "LoRA cleared - will use quantized model next generation"
 
 
 # Get available devices at startup
@@ -187,13 +200,14 @@ default_device = available_devices[0] if available_devices else "cpu"
 
 # Create Gradio interface
 # delete_cache=(60, 60) means check every 60 seconds, delete files older than 60 seconds
-with gr.Blocks(title="Z-Image Turbo UINT4", delete_cache=(60, 60)) as demo:
+with gr.Blocks(title="Z-Image Turbo", delete_cache=(60, 60)) as demo:
     gr.Markdown("""
-    # Z-Image Turbo UINT4
+    # Z-Image Turbo
 
-    Fast image generation using the quantized 3.5GB model with LoRA support.
+    Fast image generation on Apple Silicon with LoRA support.
 
-    **Model:** [Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32](https://huggingface.co/Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32)
+    **Quantized model (3.5GB):** Used when no LoRA is loaded - fast!
+    **Full model (24GB):** Used when LoRA is loaded - slower but supports adapters
     """)
 
     with gr.Row():
@@ -209,8 +223,15 @@ with gr.Blocks(title="Z-Image Turbo UINT4", delete_cache=(60, 60)) as demo:
                 width = gr.Slider(256, 1024, value=768, step=64, label="Width")
 
             with gr.Row():
-                steps = gr.Slider(1, 10, value=7, step=1, label="Steps")
+                steps = gr.Slider(1, 50, value=7, step=1, label="Steps")
                 seed = gr.Number(value=-1, label="Seed (-1 = random)")
+
+            with gr.Row():
+                guidance_scale = gr.Slider(
+                    0.0, 10.0, value=1.0, step=0.5,
+                    label="Guidance Scale (CFG)",
+                    info="1.0=Z-Image Turbo default, 0=no guidance"
+                )
 
             with gr.Row():
                 device = gr.Dropdown(
@@ -221,7 +242,7 @@ with gr.Blocks(title="Z-Image Turbo UINT4", delete_cache=(60, 60)) as demo:
                 )
 
             # LoRA section
-            gr.Markdown("### LoRA Settings")
+            gr.Markdown("### LoRA Settings (loads full model when used)")
 
             with gr.Row():
                 lora_file = gr.File(
@@ -259,7 +280,7 @@ with gr.Blocks(title="Z-Image Turbo UINT4", delete_cache=(60, 60)) as demo:
     # Event handlers
     generate_btn.click(
         fn=generate_image,
-        inputs=[prompt, height, width, steps, seed, device, lora_file, lora_strength],
+        inputs=[prompt, height, width, steps, seed, guidance_scale, device, lora_file, lora_strength],
         outputs=[output_image, seed_info],
     )
 
