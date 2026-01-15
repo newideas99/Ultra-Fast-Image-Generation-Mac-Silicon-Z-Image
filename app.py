@@ -81,6 +81,20 @@ def load_zimage_pipeline(device="mps", use_full_model=False):
     return pipe
 
 
+def get_memory_usage():
+    """Get current memory usage in GB."""
+    if torch.backends.mps.is_available():
+        return torch.mps.current_allocated_memory() / 1024**3
+    elif torch.cuda.is_available():
+        return torch.cuda.memory_allocated() / 1024**3
+    return 0
+
+def print_memory(label):
+    """Print memory usage with label."""
+    mem = get_memory_usage()
+    print(f"  [MEM] {label}: {mem:.2f} GB")
+
+
 def load_flux2_klein_pipeline(device="mps"):
     """Load FLUX.2-klein-4B with int8 quantized transformer and text encoder."""
     from diffusers import Flux2KleinPipeline
@@ -92,16 +106,15 @@ def load_flux2_klein_pipeline(device="mps"):
     from quantized_flux2 import QuantizedFlux2Transformer2DModel
     
     print(f"Loading FLUX.2-klein-4B (int8 quantized) on {device}...")
+    print_memory("Before loading")
     
-    # Download quantized model
     model_path = snapshot_download("aydin99/FLUX.2-klein-4B-int8")
     
-    # Load quantized transformer
     print("  Loading int8 transformer...")
     qtransformer = QuantizedFlux2Transformer2DModel.from_pretrained(model_path)
     qtransformer.to(device=device, dtype=torch.bfloat16)
+    print_memory("After transformer")
     
-    # Load quantized text encoder
     print("  Loading int8 text encoder...")
     config = AutoConfig.from_pretrained(f"{model_path}/text_encoder", trust_remote_code=True)
     with init_empty_weights():
@@ -113,11 +126,10 @@ def load_flux2_klein_pipeline(device="mps"):
     requantize(text_encoder, state_dict=state_dict, quantization_map=qmap)
     text_encoder.eval()
     text_encoder.to(device, dtype=torch.bfloat16)
+    print_memory("After text encoder")
     
-    # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(f"{model_path}/tokenizer")
     
-    # Load pipeline (VAE + scheduler only)
     print("  Loading VAE and scheduler...")
     pipe = Flux2KleinPipeline.from_pretrained(
         "black-forest-labs/FLUX.2-klein-4B",
@@ -126,12 +138,13 @@ def load_flux2_klein_pipeline(device="mps"):
         tokenizer=None,
         torch_dtype=torch.bfloat16,
     )
+    print_memory("After VAE/scheduler download")
     
-    # Inject quantized components
     pipe.transformer = qtransformer._wrapped
     pipe.text_encoder = text_encoder
     pipe.tokenizer = tokenizer
     pipe.to(device)
+    print_memory("After pipe.to(device)")
     
     print("  FLUX.2-klein-4B ready!")
     return pipe
@@ -257,15 +270,12 @@ def generate_image(
     # Load appropriate pipeline
     pipe = load_pipeline(model_choice, device)
     
-    # Handle LoRA for Z-Image full
     if current_model == "zimage-full" and lora_file:
         load_lora(lora_file, lora_strength, device)
     
-    # Handle seed
     if seed == -1:
         seed = torch.randint(0, 2**32, (1,)).item()
     
-    # Create generator
     if device == "cuda":
         generator = torch.Generator("cuda").manual_seed(int(seed))
     elif device == "mps":
@@ -273,14 +283,13 @@ def generate_image(
     else:
         generator = torch.Generator().manual_seed(int(seed))
     
-    # Generate
+    print_memory("Before generation")
+    
     with torch.inference_mode():
         if current_model == "flux2-klein-int8":
-            # FLUX.2-klein generation
             if input_image is not None:
-                # Image-to-image mode
-                # Resize input image to target dimensions
                 input_image = input_image.resize((int(width), int(height)), Image.LANCZOS)
+                print_memory("After image resize")
                 image = pipe(
                     prompt=prompt,
                     image=input_image,
@@ -292,7 +301,6 @@ def generate_image(
                 ).images[0]
                 mode = "img2img"
             else:
-                # Text-to-image mode
                 image = pipe(
                     prompt=prompt,
                     height=int(height),
@@ -303,7 +311,6 @@ def generate_image(
                 ).images[0]
                 mode = "txt2img"
         else:
-            # Z-Image generation (text-to-image only)
             image = pipe(
                 prompt=prompt,
                 height=int(height),
@@ -314,7 +321,20 @@ def generate_image(
             ).images[0]
             mode = "txt2img"
     
-    # Build info string
+    print_memory("After generation")
+    
+    # Force memory cleanup
+    import gc
+    gc.collect()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+        torch.mps.synchronize()
+    elif torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    
+    print_memory("After cache clear")
+    
     lora_name = os.path.basename(lora_file) if lora_file else None
     lora_info = f" | LoRA: {lora_name} ({lora_strength})" if lora_name else ""
     strength_info = f" | Strength: {strength}" if mode == "img2img" else ""
