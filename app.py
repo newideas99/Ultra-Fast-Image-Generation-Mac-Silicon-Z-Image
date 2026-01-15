@@ -339,9 +339,11 @@ def clear_lora():
 
 
 def update_ui_for_model(model_choice):
-    """Update UI visibility based on model selection."""
+    """Update UI visibility and defaults based on model selection."""
     is_flux = "FLUX" in model_choice
     is_zimage_full = "Full" in model_choice
+    
+    guidance_default = 3.5 if is_flux else 0.0
     
     return (
         gr.update(visible=is_flux),  # img2img_label
@@ -351,6 +353,7 @@ def update_ui_for_model(model_choice):
         gr.update(visible=is_zimage_full),  # lora_file
         gr.update(visible=is_zimage_full),  # lora_strength
         gr.update(visible=is_zimage_full),  # clear_lora_btn
+        gr.update(value=guidance_default),  # guidance_scale
     )
 
 
@@ -411,9 +414,9 @@ with gr.Blocks(title="Ultra Fast Image Gen", delete_cache=(60, 60)) as demo:
 
             with gr.Row():
                 guidance_scale = gr.Slider(
-                    0.0, 10.0, value=0.0, step=0.5,
+                    0.0, 10.0, value=3.5, step=0.5,
                     label="Guidance Scale (CFG)",
-                    info="0=distilled models, higher=more prompt adherence"
+                    info="FLUX: 3.5 recommended, Z-Image: 0"
                 )
 
             with gr.Row():
@@ -465,7 +468,7 @@ with gr.Blocks(title="Ultra Fast Image Gen", delete_cache=(60, 60)) as demo:
     model_choice.change(
         fn=update_ui_for_model,
         inputs=[model_choice],
-        outputs=[img2img_label, input_image, strength, lora_label, lora_file, lora_strength, clear_lora_btn],
+        outputs=[img2img_label, input_image, strength, lora_label, lora_file, lora_strength, clear_lora_btn, guidance_scale],
     )
     
     generate_btn.click(
