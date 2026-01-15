@@ -1,55 +1,23 @@
-# Ultra Fast Image Generation for Mac Silicon (Z-Image)
+# Fast Flux Studio
 
-6B parameter AI image generation that actually runs fast on your Mac. No cloud. No GPU rental.
+Ultra-fast AI image generation and editing on Mac Silicon and CUDA. Generate images from text or transform existing images with state-of-the-art diffusion models.
 
 ## Features
 
-- **Ultra Fast**: 14 seconds for 512x512, 31 seconds for 768x768
-- **Tiny Model**: Only 3.5GB (4-bit quantized from 24GB)
-- **Runs Locally**: No API keys, no cloud costs
-- **Gradio UI**: Simple web interface included
-- **LoRA Support**: Load custom LoRA adapters to customize the style
-- **CUDA Support**: Experimental support for NVIDIA GPUs
+- **Image Generation:** Create images from text prompts
+- **Image Editing:** Upload and transform images with natural language (FLUX.2-klein)
+- **Multiple Models:** Z-Image Turbo (fastest) and FLUX.2-klein-4B (editing)
+- **Quantized Models:** Low memory usage with int4/int8 quantization
+- **LoRA Support:** Load custom LoRA adapters with Z-Image Full model
+- **Cross-Platform:** Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
 
-## Benchmarks
+## Supported Models
 
-### Mac M1 Max (64GB)
-
-| Resolution | Steps | Time | Speed |
-|------------|-------|------|-------|
-| 512x512 | 7 | **23s** | 3.38s/step |
-| 768x768 | 7 | **49s** | 7.13s/step |
-
-### Mac M2 Max (32GB)
-
-| Resolution | Steps | Time | Speed |
-|------------|-------|------|-------|
-| 512x512 | 7 | **14s** | 2.08s/step |
-| 768x768 | 7 | **31s** | 4.43s/step |
-
-### Mac M3 (18GB)
-
-| Resolution | Steps | Time | Speed |
-|------------|-------|------|-------|
-| 512x512 | 7 | **74s** | 10.6s/step |
-| 768x768 | 7 | **2.5 min** | 21.4s/step |
-
-### Mac M4 (16GB)
-
-| Resolution | Steps | Time | Speed |
-|------------|-------|------|-------|
-| 512x512 | 7 | **59s** | 8.44s/step |
-| 768x768 | 7 | **1.9 min** | 15.96s/step |
-
-**RAM Usage**: ~15.5 GB
-
-**Recommended**: 768x768 @ 7-8 steps for best quality/speed balance.
-
-> **Note**: M2 Max has significantly more GPU cores (30-38) vs base M3 (10), which explains the speed difference. M3 Pro/Max should be much faster.
-
-## Model
-
-Uses [Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32](https://huggingface.co/Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32) - a 4-bit quantized version of Alibaba's [Z-Image Turbo](https://github.com/Tongyi-MAI/Z-Image) (6B parameter diffusion transformer).
+| Model | Size | Features | Speed |
+|-------|------|----------|-------|
+| FLUX.2-klein-4B (Int8) | 8GB | Text-to-image + Image editing | Fast |
+| Z-Image Turbo (Quantized) | 3.5GB | Text-to-image | Fastest |
+| Z-Image Turbo (Full) | 24GB | Text-to-image + LoRA | Slower |
 
 ## Quick Start (1-Click)
 
@@ -58,34 +26,45 @@ Uses [Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32](https://huggingface.co/Disty0/Z-I
 3. First run will auto-install dependencies (~5 min)
 4. Browser opens automatically to the UI
 
-That's it! The launcher handles everything.
-
 ## Manual Installation
 
 ```bash
-# Clone the repo
-git clone https://github.com/newideas99/Ultra-Fast-Image-Generation-Mac-Silicon-Z-Image.git
-cd Ultra-Fast-Image-Generation-Mac-Silicon-Z-Image
+git clone https://github.com/newideas99/fast-flux-studio.git
+cd fast-flux-studio
 
-# Create virtual environment
 python3.11 -m venv venv
 source venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
 ```
 
 ## Usage
 
-### Gradio Web UI (Easiest)
-
-Double-click `Launch.command` or run:
+### Web UI
 
 ```bash
 python app.py
 ```
 
 Then open http://localhost:7860 in your browser.
+
+### Model Selection
+
+In the UI, select your model from the dropdown:
+
+- **FLUX.2-klein-4B (Int8):** Default. Best for image editing and high-quality generation
+- **Z-Image Turbo (Quantized):** Fastest text-to-image, minimal memory
+- **Z-Image Turbo (Full):** Use when you need LoRA support
+
+### Image Editing (FLUX.2-klein)
+
+1. Select "FLUX.2-klein-4B (Int8)" from the model dropdown (default)
+2. Upload an image in the "Input Image" section
+3. Write a prompt describing the changes you want
+4. Adjust the "Strength" slider:
+   - Lower values (0.3-0.5): Subtle changes, keeps original structure
+   - Higher values (0.7-1.0): More dramatic changes
+5. Click Generate
 
 ### Command Line
 
@@ -102,53 +81,37 @@ Options:
 - `--lora`: Path to LoRA safetensors file
 - `--lora-strength`: LoRA strength multiplier (default: 1.0)
 
-Example:
-```bash
-python generate.py "Cyberpunk city at night, neon lights" --height 768 --width 768 --steps 7 --seed 42 --output cyberpunk.png
-```
+## Benchmarks
 
-With LoRA:
-```bash
-python generate.py "A portrait in anime style" --lora /path/to/anime-lora.safetensors --lora-strength 0.8
-```
+### FLUX.2-klein-4B (Int8)
 
-## LoRA Support
+| Hardware | Resolution | Steps | Time |
+|----------|------------|-------|------|
+| Apple Silicon | 512x512 | 4 | ~8s |
+| CUDA (RTX 3090) | 512x512 | 4 | ~3s |
 
-You can use LoRA (Low-Rank Adaptation) files to customize the model's style without retraining.
+### Z-Image Turbo (Quantized)
 
-### In the Web UI
-1. Click the "LoRA File" upload area
-2. Browse to select any `.safetensors` LoRA file from your computer
-3. Adjust the strength slider (1.0 = full effect, 0.5 = half effect)
-4. Generate images as normal
+| Mac | Resolution | Steps | Time |
+|-----|------------|-------|------|
+| M2 Max | 512x512 | 7 | 14s |
+| M2 Max | 768x768 | 7 | 31s |
+| M1 Max | 512x512 | 7 | 23s |
 
-### Supported Formats
-- Standard LoRA (`.safetensors`)
-- PEFT format LoRAs
-- LoRAs trained with ai-toolkit/zimagetrain
+## Memory Requirements
 
-### Notes
-- LoRA works with the quantized model - no extra memory needed beyond the LoRA file size
-- You can change LoRA strength without reloading
-- Click "Clear LoRA" to remove the current adapter
-
-## Performance Tips
-
-- **Resolution**: 512x512 is fastest. 768x768 is good quality/speed balance.
-- **Steps**: 5 steps is usually enough for good results. More steps = slower.
-- **First run**: First generation is slower due to model loading (~30-60s). Subsequent generations are faster.
-- **LoRA**: Loading a LoRA adds a small overhead on first use, but subsequent generations are the same speed.
-
-## Requirements
-
-- macOS with Apple Silicon (M1/M2/M3/M4)
-- Python 3.10+
-- **16GB+ unified memory required** (~15.5GB used during inference)
+| Model | RAM/VRAM Required |
+|-------|-------------------|
+| FLUX.2-klein (Int8) | 16GB |
+| Z-Image (Quantized) | 16GB |
+| Z-Image (Full) | 32GB+ |
 
 ## Credits
 
+- [FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) by Black Forest Labs
 - [Z-Image](https://github.com/Tongyi-MAI/Z-Image) by Alibaba
 - [SDNQ Quantization](https://huggingface.co/Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32) by Disty0
+- [Int8 Quantization](https://huggingface.co/aydin99/FLUX.2-klein-4B-int8) using optimum-quanto
 
 ## License
 

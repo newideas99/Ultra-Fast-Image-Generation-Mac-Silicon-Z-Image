@@ -1,23 +1,34 @@
 """
-Z-Image Turbo - Gradio Web Interface
+Flux Image Generator - Gradio Web Interface
 
-Fast image generation on Apple Silicon.
-Uses quantized model for speed, full model when LoRA is loaded.
+Fast image generation on Apple Silicon and CUDA.
+Supports multiple models:
+- Z-Image Turbo (quantized/full)
+- FLUX.2-klein-4B (int8 quantized)
+
+FLUX.2-klein also supports image-to-image editing!
 """
 
 import os
 os.environ["PYTORCH_MPS_FAST_MATH"] = "1"
 
 import torch
-import sdnq  # Required for quantized model
 import gradio as gr
-from diffusers import ZImagePipeline, FlowMatchEulerDiscreteScheduler
+from PIL import Image
+import json
 
-# Global pipeline, device, and model state
+# Global state
 pipe = None
 current_device = None
+current_model = None  # "zimage-quant", "zimage-full", "flux2-klein-int8"
 current_lora_path = None
-current_model_type = None  # "quantized" or "full"
+
+# Model choices
+MODEL_CHOICES = [
+    "Z-Image Turbo (Quantized - Fast)",
+    "Z-Image Turbo (Full - LoRA support)",
+    "FLUX.2-klein-4B (Int8 - Image editing)",
+]
 
 
 def get_available_devices():
@@ -31,24 +42,11 @@ def get_available_devices():
     return devices
 
 
-def load_pipeline(device="mps", use_full_model=False):
-    """Load the pipeline (cached globally). Switches between quantized and full model."""
-    global pipe, current_device, current_model_type, current_lora_path
-
-    model_type = "full" if use_full_model else "quantized"
-
-    # Return cached pipeline if same device and model type
-    if pipe is not None and current_device == device and current_model_type == model_type:
-        return pipe
-
-    # Need to reload - clear existing pipeline
-    if pipe is not None:
-        print(f"Switching from {current_model_type} to {model_type} model...")
-        del pipe
-        current_lora_path = None  # Reset LoRA state when switching models
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
+def load_zimage_pipeline(device="mps", use_full_model=False):
+    """Load Z-Image pipeline (quantized or full)."""
+    import sdnq  # Required for quantized model
+    from diffusers import ZImagePipeline, FlowMatchEulerDiscreteScheduler
+    
     if use_full_model:
         print(f"Loading Z-Image-Turbo (full precision) on {device}...")
         dtype = torch.bfloat16 if device in ["mps", "cuda"] else torch.float32
@@ -66,7 +64,6 @@ def load_pipeline(device="mps", use_full_model=False):
             low_cpu_mem_usage=True,
         )
 
-    # Use Euler with beta sigmas for cleaner images
     pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
         pipe.scheduler.config,
         use_beta_sigmas=True,
@@ -81,44 +78,137 @@ def load_pipeline(device="mps", use_full_model=False):
     if hasattr(getattr(pipe, "vae", None), "enable_tiling"):
         pipe.vae.enable_tiling()
 
+    return pipe
+
+
+def load_flux2_klein_pipeline(device="mps"):
+    """Load FLUX.2-klein-4B with int8 quantized transformer and text encoder."""
+    from diffusers import Flux2KleinPipeline
+    from transformers import Qwen3ForCausalLM, AutoTokenizer, AutoConfig
+    from optimum.quanto import requantize
+    from accelerate import init_empty_weights
+    from safetensors.torch import load_file
+    from huggingface_hub import snapshot_download
+    from quantized_flux2 import QuantizedFlux2Transformer2DModel
+    
+    print(f"Loading FLUX.2-klein-4B (int8 quantized) on {device}...")
+    
+    # Download quantized model
+    model_path = snapshot_download("aydin99/FLUX.2-klein-4B-int8")
+    
+    # Load quantized transformer
+    print("  Loading int8 transformer...")
+    qtransformer = QuantizedFlux2Transformer2DModel.from_pretrained(model_path)
+    qtransformer.to(device=device, dtype=torch.bfloat16)
+    
+    # Load quantized text encoder
+    print("  Loading int8 text encoder...")
+    config = AutoConfig.from_pretrained(f"{model_path}/text_encoder", trust_remote_code=True)
+    with init_empty_weights():
+        text_encoder = Qwen3ForCausalLM(config)
+    
+    with open(f"{model_path}/text_encoder/quanto_qmap.json", "r") as f:
+        qmap = json.load(f)
+    state_dict = load_file(f"{model_path}/text_encoder/model.safetensors")
+    requantize(text_encoder, state_dict=state_dict, quantization_map=qmap)
+    text_encoder.eval()
+    text_encoder.to(device, dtype=torch.bfloat16)
+    
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(f"{model_path}/tokenizer")
+    
+    # Load pipeline (VAE + scheduler only)
+    print("  Loading VAE and scheduler...")
+    pipe = Flux2KleinPipeline.from_pretrained(
+        "black-forest-labs/FLUX.2-klein-4B",
+        transformer=None,
+        text_encoder=None,
+        tokenizer=None,
+        torch_dtype=torch.bfloat16,
+    )
+    
+    # Inject quantized components
+    pipe.transformer = qtransformer._wrapped
+    pipe.text_encoder = text_encoder
+    pipe.tokenizer = tokenizer
+    pipe.to(device)
+    
+    print("  FLUX.2-klein-4B ready!")
+    return pipe
+
+
+def load_pipeline(model_choice: str, device: str = "mps"):
+    """Load the selected pipeline."""
+    global pipe, current_device, current_model, current_lora_path
+    
+    # Determine model type
+    if "Quantized" in model_choice:
+        model_type = "zimage-quant"
+    elif "Full" in model_choice:
+        model_type = "zimage-full"
+    elif "FLUX" in model_choice:
+        model_type = "flux2-klein-int8"
+    else:
+        model_type = "zimage-quant"
+    
+    # Return cached if same
+    if pipe is not None and current_device == device and current_model == model_type:
+        return pipe
+    
+    # Clear existing pipeline
+    if pipe is not None:
+        print(f"Switching from {current_model} to {model_type}...")
+        del pipe
+        current_lora_path = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    
+    # Load new pipeline
+    if model_type == "flux2-klein-int8":
+        pipe = load_flux2_klein_pipeline(device)
+    elif model_type == "zimage-full":
+        pipe = load_zimage_pipeline(device, use_full_model=True)
+    else:
+        pipe = load_zimage_pipeline(device, use_full_model=False)
+    
     current_device = device
-    current_model_type = model_type
+    current_model = model_type
     print(f"Pipeline loaded on {device}! (Model: {model_type})")
     return pipe
 
 
 def load_lora(lora_file, lora_strength: float, device: str):
-    """Load or update LoRA adapter using native diffusers support."""
+    """Load or update LoRA adapter (Z-Image full model only)."""
     global current_lora_path, pipe
-
-    # Handle no file selected
+    
+    if current_model != "zimage-full":
+        return "LoRA only supported with Z-Image Full model"
+    
     if lora_file is None or lora_file == "":
         if current_lora_path is not None:
             print("Unloading current LoRA...")
             pipe.unload_lora_weights()
             current_lora_path = None
         return "No LoRA loaded"
-
-    # Get the path from the file upload
+    
     lora_path = lora_file if isinstance(lora_file, str) else lora_file.name
-
+    
     if not os.path.exists(lora_path):
         return f"LoRA file not found: {lora_path}"
-
+    
     if not lora_path.endswith('.safetensors'):
         return "Please select a .safetensors file"
-
-    # If same LoRA, just update scale
+    
     if current_lora_path == lora_path:
         pipe.set_adapters(["default"], adapter_weights=[lora_strength])
         return f"Updated LoRA strength to {lora_strength}"
-
-    # Unload old LoRA if exists
+    
     if current_lora_path is not None:
         print(f"Unloading previous LoRA: {current_lora_path}")
         pipe.unload_lora_weights()
-
-    # Load new LoRA using native diffusers support
+    
     try:
         lora_name = os.path.basename(lora_path)
         print(f"Loading LoRA: {lora_path}")
@@ -143,46 +233,100 @@ def update_lora_strength(strength: float):
     return "No LoRA loaded"
 
 
-def generate_image(prompt, height, width, steps, seed, guidance, device, lora_file, lora_strength):
-    """Generate an image from the prompt."""
+def generate_image(
+    prompt, 
+    height, 
+    width, 
+    steps, 
+    seed, 
+    guidance, 
+    device, 
+    model_choice,
+    input_image,
+    strength,
+    lora_file, 
+    lora_strength
+):
+    """Generate an image from the prompt, optionally with image input."""
     global pipe
-
-    # Determine if we need full model (LoRA selected) or quantized (no LoRA)
-    use_lora = lora_file is not None and lora_file != ""
-
+    
+    # For Z-Image with LoRA, force full model
+    if "Z-Image" in model_choice and lora_file is not None and lora_file != "":
+        model_choice = "Z-Image Turbo (Full - LoRA support)"
+    
     # Load appropriate pipeline
-    pipe = load_pipeline(device, use_full_model=use_lora)
-
-    # Handle LoRA loading/updating (only if using full model)
-    if use_lora:
-        lora_status = load_lora(lora_file, lora_strength, device)
-
+    pipe = load_pipeline(model_choice, device)
+    
+    # Handle LoRA for Z-Image full
+    if current_model == "zimage-full" and lora_file:
+        load_lora(lora_file, lora_strength, device)
+    
+    # Handle seed
     if seed == -1:
         seed = torch.randint(0, 2**32, (1,)).item()
-
-    # Use appropriate generator for device
+    
+    # Create generator
     if device == "cuda":
         generator = torch.Generator("cuda").manual_seed(int(seed))
     elif device == "mps":
         generator = torch.Generator("mps").manual_seed(int(seed))
     else:
         generator = torch.Generator().manual_seed(int(seed))
-
+    
+    # Generate
     with torch.inference_mode():
-        image = pipe(
-            prompt=prompt,
-            height=int(height),
-            width=int(width),
-            num_inference_steps=int(steps),
-            guidance_scale=float(guidance),
-            generator=generator,
-        ).images[0]
-
+        if current_model == "flux2-klein-int8":
+            # FLUX.2-klein generation
+            if input_image is not None:
+                # Image-to-image mode
+                # Resize input image to target dimensions
+                input_image = input_image.resize((int(width), int(height)), Image.LANCZOS)
+                image = pipe(
+                    prompt=prompt,
+                    image=input_image,
+                    height=int(height),
+                    width=int(width),
+                    num_inference_steps=int(steps),
+                    guidance_scale=float(guidance),
+                    generator=generator,
+                ).images[0]
+                mode = "img2img"
+            else:
+                # Text-to-image mode
+                image = pipe(
+                    prompt=prompt,
+                    height=int(height),
+                    width=int(width),
+                    num_inference_steps=int(steps),
+                    guidance_scale=float(guidance),
+                    generator=generator,
+                ).images[0]
+                mode = "txt2img"
+        else:
+            # Z-Image generation (text-to-image only)
+            image = pipe(
+                prompt=prompt,
+                height=int(height),
+                width=int(width),
+                num_inference_steps=int(steps),
+                guidance_scale=float(guidance),
+                generator=generator,
+            ).images[0]
+            mode = "txt2img"
+    
+    # Build info string
     lora_name = os.path.basename(lora_file) if lora_file else None
     lora_info = f" | LoRA: {lora_name} ({lora_strength})" if lora_name else ""
-    model_info = "full" if use_lora else "quant"
+    strength_info = f" | Strength: {strength}" if mode == "img2img" else ""
     cfg_info = f" | CFG: {guidance}" if guidance > 0 else ""
-    return image, f"Seed: {seed} | Model: {model_info} | Device: {device}{cfg_info}{lora_info}"
+    
+    model_short = {
+        "zimage-quant": "Z-Image (quant)",
+        "zimage-full": "Z-Image (full)",
+        "flux2-klein-int8": "FLUX.2-klein (int8)",
+    }.get(current_model, current_model)
+    
+    return image, f"Seed: {seed} | Model: {model_short} | Mode: {mode} | Device: {device}{cfg_info}{strength_info}{lora_info}"
 
 
 def clear_lora():
@@ -191,7 +335,23 @@ def clear_lora():
     if current_lora_path is not None and pipe is not None:
         pipe.unload_lora_weights()
         current_lora_path = None
-    return None, "LoRA cleared - will use quantized model next generation"
+    return None, "LoRA cleared"
+
+
+def update_ui_for_model(model_choice):
+    """Update UI visibility based on model selection."""
+    is_flux = "FLUX" in model_choice
+    is_zimage_full = "Full" in model_choice
+    
+    return (
+        gr.update(visible=is_flux),  # img2img_label
+        gr.update(visible=is_flux),  # input_image
+        gr.update(visible=is_flux),  # strength slider
+        gr.update(visible=is_zimage_full),  # lora_label
+        gr.update(visible=is_zimage_full),  # lora_file
+        gr.update(visible=is_zimage_full),  # lora_strength
+        gr.update(visible=is_zimage_full),  # clear_lora_btn
+    )
 
 
 # Get available devices at startup
@@ -199,38 +359,61 @@ available_devices = get_available_devices()
 default_device = available_devices[0] if available_devices else "cpu"
 
 # Create Gradio interface
-# delete_cache=(60, 60) means check every 60 seconds, delete files older than 60 seconds
-with gr.Blocks(title="Z-Image Turbo", delete_cache=(60, 60)) as demo:
+with gr.Blocks(title="Fast Flux Studio", delete_cache=(60, 60)) as demo:
     gr.Markdown("""
-    # Z-Image Turbo
-
-    Fast image generation on Apple Silicon with LoRA support.
-
-    **Quantized model (3.5GB):** Used when no LoRA is loaded - fast!
-    **Full model (24GB):** Used when LoRA is loaded - slower but supports adapters
+    # Fast Flux Studio
+    
+    Ultra-fast image generation and editing on Apple Silicon and CUDA.
+    
+    **Models:**
+    - **FLUX.2-klein-4B (Int8):** 8GB, supports image-to-image editing (default)
+    - **Z-Image Turbo (Quantized):** 3.5GB, fastest, no LoRA
+    - **Z-Image Turbo (Full):** 24GB, slower, LoRA support
     """)
 
     with gr.Row():
         with gr.Column(scale=1):
+            # Model selection
+            model_choice = gr.Dropdown(
+                choices=MODEL_CHOICES,
+                value=MODEL_CHOICES[2],
+                label="Model",
+                info="FLUX.2-klein supports image editing"
+            )
+            
             prompt = gr.Textbox(
                 label="Prompt",
                 placeholder="Describe the image you want to generate...",
                 lines=3,
             )
+            
+            # Image input (FLUX only) - visible by default since FLUX is default
+            img2img_label = gr.Markdown("### Image Input (FLUX.2-klein only)", visible=True)
+            input_image = gr.Image(
+                label="Input Image (optional - for image-to-image)",
+                type="pil",
+                visible=True,
+            )
+            strength = gr.Slider(
+                0.0, 1.0, value=0.75, step=0.05,
+                label="Strength",
+                info="How much to transform the input (1.0 = ignore input)",
+                visible=True,
+            )
 
             with gr.Row():
-                height = gr.Slider(256, 1024, value=768, step=64, label="Height")
-                width = gr.Slider(256, 1024, value=768, step=64, label="Width")
+                height = gr.Slider(256, 1024, value=512, step=64, label="Height")
+                width = gr.Slider(256, 1024, value=512, step=64, label="Width")
 
             with gr.Row():
-                steps = gr.Slider(1, 50, value=7, step=1, label="Steps")
+                steps = gr.Slider(1, 50, value=4, step=1, label="Steps")
                 seed = gr.Number(value=-1, label="Seed (-1 = random)")
 
             with gr.Row():
                 guidance_scale = gr.Slider(
-                    0.0, 10.0, value=1.0, step=0.5,
+                    0.0, 10.0, value=0.0, step=0.5,
                     label="Guidance Scale (CFG)",
-                    info="1.0=Z-Image Turbo default, 0=no guidance"
+                    info="0=distilled models, higher=more prompt adherence"
                 )
 
             with gr.Row():
@@ -238,25 +421,26 @@ with gr.Blocks(title="Z-Image Turbo", delete_cache=(60, 60)) as demo:
                     choices=available_devices,
                     value=default_device,
                     label="Device",
-                    info="MPS=Mac, CUDA=NVIDIA (experimental), CPU=slow"
+                    info="MPS=Mac, CUDA=NVIDIA, CPU=slow"
                 )
 
-            # LoRA section
-            gr.Markdown("### LoRA Settings (loads full model when used)")
-
+            # LoRA section (Z-Image Full only) - no Group wrapper for visibility to work
+            lora_label = gr.Markdown("### LoRA Settings (Z-Image Full only)", visible=False)
             with gr.Row():
                 lora_file = gr.File(
                     label="LoRA File",
                     file_types=[".safetensors"],
                     file_count="single",
                     type="filepath",
+                    visible=False,
                 )
-                clear_lora_btn = gr.Button("Clear LoRA", scale=0, min_width=100)
+                clear_lora_btn = gr.Button("Clear LoRA", scale=0, min_width=100, visible=False)
 
             lora_strength = gr.Slider(
                 0.0, 2.0, value=1.0, step=0.05,
                 label="LoRA Strength",
-                info="1.0 = full effect, 0.5 = half effect"
+                info="1.0 = full effect, 0.5 = half effect",
+                visible=False,
             )
 
             generate_btn = gr.Button("Generate", variant="primary")
@@ -278,9 +462,18 @@ with gr.Blocks(title="Z-Image Turbo", delete_cache=(60, 60)) as demo:
     )
 
     # Event handlers
+    model_choice.change(
+        fn=update_ui_for_model,
+        inputs=[model_choice],
+        outputs=[img2img_label, input_image, strength, lora_label, lora_file, lora_strength, clear_lora_btn],
+    )
+    
     generate_btn.click(
         fn=generate_image,
-        inputs=[prompt, height, width, steps, seed, guidance_scale, device, lora_file, lora_strength],
+        inputs=[
+            prompt, height, width, steps, seed, guidance_scale, device,
+            model_choice, input_image, strength, lora_file, lora_strength
+        ],
         outputs=[output_image, seed_info],
     )
 
@@ -289,7 +482,6 @@ with gr.Blocks(title="Z-Image Turbo", delete_cache=(60, 60)) as demo:
         outputs=[lora_file, seed_info],
     )
 
-    # Live update LoRA strength
     lora_strength.change(
         fn=update_lora_strength,
         inputs=[lora_strength],

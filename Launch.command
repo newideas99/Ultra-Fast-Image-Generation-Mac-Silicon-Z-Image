@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Ultra Fast Image Generation - Mac Launcher
+# Fast Flux Studio - Mac Launcher
 # Double-click this file to start the app!
 
 cd "$(dirname "$0")"
 
 echo "============================================"
-echo "  Ultra Fast Image Generation for Mac"
+echo "        Fast Flux Studio for Mac"
 echo "============================================"
 echo ""
 

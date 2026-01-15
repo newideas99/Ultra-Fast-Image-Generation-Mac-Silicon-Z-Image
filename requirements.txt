@@ -12,3 +12,4 @@ gradio>=6.0.0
 pillow
 peft>=0.17.0
 scipy
+optimum-quanto>=0.2.7

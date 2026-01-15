@@ -1,0 +1,31 @@
+[project]
+name = "flux-image-gen"
+version = "0.1.0"
+description = "Fast AI image generation on Mac Silicon and CUDA with multiple model support"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "accelerate>=0.34.0",
+    "transformers>=4.45.0",
+    "sentencepiece",
+    "protobuf",
+    "safetensors",
+    "huggingface-hub",
+    "diffusers",
+    "gradio>=6.0.0",
+    "pillow>=10.0.0",
+    "peft>=0.17.0",
+    "scipy",
+    "optimum-quanto>=0.2.7",
+    "sdnq",
+    "setuptools>=80.9.0",
+]
+
+[tool.uv]
+dev-dependencies = []
+
+[tool.uv.sources]
+diffusers = { git = "https://github.com/huggingface/diffusers.git" }
+sdnq = { git = "https://github.com/Disty0/sdnq.git" }
