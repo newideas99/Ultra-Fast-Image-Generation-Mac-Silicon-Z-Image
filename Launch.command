@@ -95,13 +95,13 @@ fi
 
 echo ""
 echo "Starting Gradio UI..."
-echo "Opening browser to http://localhost:7860"
+echo "Opening browser to http://127.0.0.1:7860"
 echo ""
 echo "(Press Ctrl+C to stop the server)"
 echo ""
 
-# Open browser after a short delay
-(sleep 3 && open http://localhost:7860) &
+# Open browser after server starts (6s delay for model loading)
+(sleep 6 && open http://127.0.0.1:7860) &
 
 # Run the app
 python app.py
