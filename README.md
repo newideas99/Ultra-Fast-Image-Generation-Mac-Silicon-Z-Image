@@ -1,12 +1,12 @@
-# Fast Flux Studio
+# Ultra Fast Image Gen
 
-Ultra-fast AI image generation and editing on Mac Silicon and CUDA. Generate images from text or transform existing images with state-of-the-art diffusion models.
+AI image generation and editing on Mac Silicon and CUDA. Generate images from text or transform existing images with state-of-the-art diffusion models.
 
 ## Features
 
 - **Image Generation:** Create images from text prompts
-- **Image Editing:** Upload and transform images with natural language (FLUX.2-klein)
-- **Multiple Models:** Z-Image Turbo (fastest) and FLUX.2-klein-4B (editing)
+- **Image Editing:** Upload and transform images with natural language
+- **Multiple Models:** FLUX.2-klein and Z-Image Turbo
 - **Quantized Models:** Low memory usage with int4/int8 quantization
 - **LoRA Support:** Load custom LoRA adapters with Z-Image Full model
 - **Cross-Platform:** Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
@@ -29,8 +29,8 @@ Ultra-fast AI image generation and editing on Mac Silicon and CUDA. Generate ima
 ## Manual Installation
 
 ```bash
-git clone https://github.com/newideas99/fast-flux-studio.git
-cd fast-flux-studio
+git clone https://github.com/newideas99/ultra-fast-image-gen.git
+cd ultra-fast-image-gen
 
 python3.11 -m venv venv
 source venv/bin/activate
@@ -49,8 +49,6 @@ python app.py
 Then open http://localhost:7860 in your browser.
 
 ### Model Selection
-
-In the UI, select your model from the dropdown:
 
 - **FLUX.2-klein-4B (Int8):** Default. Best for image editing and high-quality generation
 - **Z-Image Turbo (Quantized):** Fastest text-to-image, minimal memory

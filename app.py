@@ -359,11 +359,11 @@ available_devices = get_available_devices()
 default_device = available_devices[0] if available_devices else "cpu"
 
 # Create Gradio interface
-with gr.Blocks(title="Fast Flux Studio", delete_cache=(60, 60)) as demo:
+with gr.Blocks(title="Ultra Fast Image Gen", delete_cache=(60, 60)) as demo:
     gr.Markdown("""
-    # Fast Flux Studio
+    # Ultra Fast Image Gen
     
-    Ultra-fast image generation and editing on Apple Silicon and CUDA.
+    AI image generation and editing on Apple Silicon and CUDA.
     
     **Models:**
     - **FLUX.2-klein-4B (Int8):** 8GB, supports image-to-image editing (default)
