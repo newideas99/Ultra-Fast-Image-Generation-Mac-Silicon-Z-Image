@@ -16,6 +16,21 @@ import torch
 import gradio as gr
 from PIL import Image
 import json
+import atexit
+import shutil
+import tempfile
+
+
+def cleanup_gradio_cache():
+    gradio_temp = os.path.join(tempfile.gettempdir(), "gradio")
+    if os.path.exists(gradio_temp):
+        try:
+            shutil.rmtree(gradio_temp)
+            print("Cleaned up Gradio cache.")
+        except Exception:
+            pass
+
+atexit.register(cleanup_gradio_cache)
 
 # Global state
 pipe = None
@@ -25,9 +40,10 @@ current_lora_path = None
 
 # Model choices
 MODEL_CHOICES = [
+    "FLUX.2-klein-4B (4bit SDNQ - Low VRAM)",
+    "FLUX.2-klein-4B (Int8)",
     "Z-Image Turbo (Quantized - Fast)",
     "Z-Image Turbo (Full - LoRA support)",
-    "FLUX.2-klein-4B (Int8 - Image editing)",
 ]
 
 
@@ -146,29 +162,75 @@ def load_flux2_klein_pipeline(device="mps"):
     pipe.to(device)
     print_memory("After pipe.to(device)")
     
+    # Memory optimizations
+    pipe.enable_attention_slicing()
+    if hasattr(pipe, "enable_vae_slicing"):
+        pipe.enable_vae_slicing()
+    if hasattr(pipe, "enable_vae_tiling"):
+        pipe.enable_vae_tiling()
+    elif hasattr(getattr(pipe, "vae", None), "enable_tiling"):
+        pipe.vae.enable_tiling()
+    print_memory("After memory optimizations")
+    
     print("  FLUX.2-klein-4B ready!")
     return pipe
 
 
+def load_flux2_klein_sdnq_pipeline(device="mps"):
+    from sdnq import SDNQConfig
+    from diffusers import Flux2KleinPipeline
+    from transformers import AutoTokenizer
+    
+    print(f"Loading FLUX.2-klein-4B (4bit SDNQ) on {device}...")
+    print_memory("Before loading")
+    
+    print("  Loading tokenizer from base model (SDNQ model missing vocab files)...")
+    tokenizer = AutoTokenizer.from_pretrained(
+        "black-forest-labs/FLUX.2-klein-4B",
+        subfolder="tokenizer",
+        use_fast=False,
+    )
+    
+    pipe = Flux2KleinPipeline.from_pretrained(
+        "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic",
+        tokenizer=tokenizer,
+        torch_dtype=torch.bfloat16,
+    )
+    print_memory("After loading")
+    
+    pipe.to(device)
+    print_memory("After pipe.to(device)")
+    
+    pipe.enable_attention_slicing()
+    if hasattr(pipe, "enable_vae_slicing"):
+        pipe.enable_vae_slicing()
+    if hasattr(pipe, "enable_vae_tiling"):
+        pipe.enable_vae_tiling()
+    elif hasattr(getattr(pipe, "vae", None), "enable_tiling"):
+        pipe.vae.enable_tiling()
+    print_memory("After memory optimizations")
+    
+    print("  FLUX.2-klein-4B (SDNQ) ready!")
+    return pipe
+
+
 def load_pipeline(model_choice: str, device: str = "mps"):
-    """Load the selected pipeline."""
     global pipe, current_device, current_model, current_lora_path
     
-    # Determine model type
     if "Quantized" in model_choice:
         model_type = "zimage-quant"
     elif "Full" in model_choice:
         model_type = "zimage-full"
+    elif "4bit SDNQ" in model_choice:
+        model_type = "flux2-klein-sdnq"
     elif "FLUX" in model_choice:
         model_type = "flux2-klein-int8"
     else:
         model_type = "zimage-quant"
     
-    # Return cached if same
     if pipe is not None and current_device == device and current_model == model_type:
         return pipe
     
-    # Clear existing pipeline
     if pipe is not None:
         print(f"Switching from {current_model} to {model_type}...")
         del pipe
@@ -178,9 +240,10 @@ def load_pipeline(model_choice: str, device: str = "mps"):
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
     
-    # Load new pipeline
     if model_type == "flux2-klein-int8":
         pipe = load_flux2_klein_pipeline(device)
+    elif model_type == "flux2-klein-sdnq":
+        pipe = load_flux2_klein_sdnq_pipeline(device)
     elif model_type == "zimage-full":
         pipe = load_zimage_pipeline(device, use_full_model=True)
     else:
@@ -255,19 +318,15 @@ def generate_image(
     guidance, 
     device, 
     model_choice,
-    input_image,
-    strength,
+    input_images,
     lora_file, 
     lora_strength
 ):
-    """Generate an image from the prompt, optionally with image input."""
     global pipe
     
-    # For Z-Image with LoRA, force full model
     if "Z-Image" in model_choice and lora_file is not None and lora_file != "":
         model_choice = "Z-Image Turbo (Full - LoRA support)"
     
-    # Load appropriate pipeline
     pipe = load_pipeline(model_choice, device)
     
     if current_model == "zimage-full" and lora_file:
@@ -286,20 +345,36 @@ def generate_image(
     print_memory("Before generation")
     
     with torch.inference_mode():
-        if current_model == "flux2-klein-int8":
-            if input_image is not None:
-                input_image = input_image.resize((int(width), int(height)), Image.LANCZOS)
-                print_memory("After image resize")
+        if current_model in ("flux2-klein-int8", "flux2-klein-sdnq"):
+            images_to_process = None
+            if input_images is not None and len(input_images) > 0:
+                img_w, img_h = int(width), int(height)
+                images_to_process = []
+                for img_data in input_images[:6]:
+                    img = img_data[0] if isinstance(img_data, tuple) else img_data
+                    resized = img.copy().resize((img_w, img_h), Image.LANCZOS)
+                    if resized.mode != "RGB":
+                        resized = resized.convert("RGB")
+                    images_to_process.append(resized)
+                print_memory(f"After resizing {len(images_to_process)} image(s)")
+                
+                if hasattr(pipe, "vae") and hasattr(pipe.vae, "disable_tiling"):
+                    pipe.vae.disable_tiling()
+                
                 image = pipe(
                     prompt=prompt,
-                    image=input_image,
-                    height=int(height),
-                    width=int(width),
+                    image=images_to_process if len(images_to_process) > 1 else images_to_process[0],
+                    height=img_h,
+                    width=img_w,
                     num_inference_steps=int(steps),
                     guidance_scale=float(guidance),
                     generator=generator,
                 ).images[0]
-                mode = "img2img"
+                
+                if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+                    pipe.vae.enable_tiling()
+                
+                mode = f"img2img ({len(images_to_process)} ref)"
             else:
                 image = pipe(
                     prompt=prompt,
@@ -337,16 +412,16 @@ def generate_image(
     
     lora_name = os.path.basename(lora_file) if lora_file else None
     lora_info = f" | LoRA: {lora_name} ({lora_strength})" if lora_name else ""
-    strength_info = f" | Strength: {strength}" if mode == "img2img" else ""
     cfg_info = f" | CFG: {guidance}" if guidance > 0 else ""
     
     model_short = {
         "zimage-quant": "Z-Image (quant)",
         "zimage-full": "Z-Image (full)",
         "flux2-klein-int8": "FLUX.2-klein (int8)",
+        "flux2-klein-sdnq": "FLUX.2-klein (4bit)",
     }.get(current_model, current_model)
     
-    return image, f"Seed: {seed} | Model: {model_short} | Mode: {mode} | Device: {device}{cfg_info}{strength_info}{lora_info}"
+    return image, f"Seed: {seed} | Model: {model_short} | Mode: {mode} | Device: {device}{cfg_info}{lora_info}"
 
 
 def clear_lora():
@@ -356,6 +431,66 @@ def clear_lora():
         pipe.unload_lora_weights()
         current_lora_path = None
     return None, "LoRA cleared"
+
+
+def calculate_dimensions_from_ratio(width: int, height: int, target_resolution: str) -> tuple:
+    """Calculate output dimensions maintaining aspect ratio for target resolution."""
+    if "1536" in target_resolution:
+        target_size = 1536
+    elif "1280" in target_resolution:
+        target_size = 1280
+    elif "2048" in target_resolution or "2K" in target_resolution:
+        target_size = 2048
+    else:
+        target_size = 1024
+    
+    aspect_ratio = width / height
+    
+    if aspect_ratio >= 1:
+        new_width = target_size
+        new_height = int(target_size / aspect_ratio)
+    else:
+        new_height = target_size
+        new_width = int(target_size * aspect_ratio)
+    
+    new_width = (new_width // 64) * 64
+    new_height = (new_height // 64) * 64
+    
+    new_width = max(256, min(2048, new_width))
+    new_height = max(256, min(2048, new_height))
+    
+    return new_width, new_height
+
+
+def on_image_upload(images, current_preset):
+    if images is None or len(images) == 0:
+        return gr.update(visible=True), gr.update(visible=True), gr.update(visible=False, value="~1024px")
+    
+    try:
+        first_image = images[0][0] if isinstance(images[0], tuple) else images[0]
+        img_width, img_height = first_image.size
+    except Exception:
+        return gr.update(visible=True), gr.update(visible=True), gr.update(visible=False, value="~1024px")
+    
+    preset = current_preset if current_preset in ["~1024px", "~1280px", "~1536px (32GB+)"] else "~1024px"
+    new_width, new_height = calculate_dimensions_from_ratio(img_width, img_height, preset)
+    
+    return (
+        gr.update(visible=False, value=new_width),
+        gr.update(visible=False, value=new_height),
+        gr.update(visible=True, value=preset),
+    )
+
+
+def on_resolution_preset_change(preset, images):
+    if images is None or len(images) == 0:
+        return gr.update(), gr.update()
+    
+    first_image = images[0][0] if isinstance(images[0], tuple) else images[0]
+    img_width, img_height = first_image.size
+    new_width, new_height = calculate_dimensions_from_ratio(img_width, img_height, preset)
+    
+    return gr.update(value=new_width), gr.update(value=new_height)
 
 
 def update_ui_for_model(model_choice):
@@ -368,7 +503,7 @@ def update_ui_for_model(model_choice):
     return (
         gr.update(visible=is_flux),  # img2img_label
         gr.update(visible=is_flux),  # input_image
-        gr.update(visible=is_flux),  # strength slider
+        gr.update(visible=is_flux),  # resolution_preset
         gr.update(visible=is_zimage_full),  # lora_label
         gr.update(visible=is_zimage_full),  # lora_file
         gr.update(visible=is_zimage_full),  # lora_strength
@@ -382,7 +517,7 @@ available_devices = get_available_devices()
 default_device = available_devices[0] if available_devices else "cpu"
 
 # Create Gradio interface
-with gr.Blocks(title="Ultra Fast Image Gen", delete_cache=(60, 60)) as demo:
+with gr.Blocks(title="Ultra Fast Image Gen") as demo:
     gr.Markdown("""
     # Ultra Fast Image Gen
     
@@ -392,6 +527,8 @@ with gr.Blocks(title="Ultra Fast Image Gen", delete_cache=(60, 60)) as demo:
     - **FLUX.2-klein-4B (Int8):** 8GB, supports image-to-image editing (default)
     - **Z-Image Turbo (Quantized):** 3.5GB, fastest, no LoRA
     - **Z-Image Turbo (Full):** 24GB, slower, LoRA support
+    
+    **Resolutions:** Up to 2048px for txt2img. Image-to-image: 1K (16GB) or 1.5K (32GB+).
     """)
 
     with gr.Row():
@@ -399,7 +536,7 @@ with gr.Blocks(title="Ultra Fast Image Gen", delete_cache=(60, 60)) as demo:
             # Model selection
             model_choice = gr.Dropdown(
                 choices=MODEL_CHOICES,
-                value=MODEL_CHOICES[2],
+                value=MODEL_CHOICES[0],
                 label="Model",
                 info="FLUX.2-klein supports image editing"
             )
@@ -411,22 +548,27 @@ with gr.Blocks(title="Ultra Fast Image Gen", delete_cache=(60, 60)) as demo:
             )
             
             # Image input (FLUX only) - visible by default since FLUX is default
-            img2img_label = gr.Markdown("### Image Input (FLUX.2-klein only)", visible=True)
-            input_image = gr.Image(
-                label="Input Image (optional - for image-to-image)",
+            img2img_label = gr.Markdown("### Image Input (FLUX.2-klein only - up to 6 images)", visible=True)
+            input_images = gr.Gallery(
+                label="Input Images (optional - for image-to-image)",
                 type="pil",
                 visible=True,
-            )
-            strength = gr.Slider(
-                0.0, 1.0, value=0.75, step=0.05,
-                label="Strength",
-                info="How much to transform the input (1.0 = ignore input)",
-                visible=True,
+                columns=3,
+                height="auto",
+                interactive=True,
             )
 
+            resolution_preset = gr.Radio(
+                choices=["~1024px", "~1280px", "~1536px (32GB+)"],
+                value="~1024px",
+                label="Output Resolution (longest side)",
+                info="Maintains your image's aspect ratio",
+                visible=False,
+            )
+            
             with gr.Row():
-                height = gr.Slider(256, 1024, value=512, step=64, label="Height")
-                width = gr.Slider(256, 1024, value=512, step=64, label="Width")
+                height = gr.Slider(256, 2048, value=512, step=64, label="Height")
+                width = gr.Slider(256, 2048, value=512, step=64, label="Width")
 
             with gr.Row():
                 steps = gr.Slider(1, 50, value=4, step=1, label="Steps")
@@ -488,14 +630,26 @@ with gr.Blocks(title="Ultra Fast Image Gen", delete_cache=(60, 60)) as demo:
     model_choice.change(
         fn=update_ui_for_model,
         inputs=[model_choice],
-        outputs=[img2img_label, input_image, strength, lora_label, lora_file, lora_strength, clear_lora_btn, guidance_scale],
+        outputs=[img2img_label, input_images, resolution_preset, lora_label, lora_file, lora_strength, clear_lora_btn, guidance_scale],
+    )
+    
+    input_images.change(
+        fn=on_image_upload,
+        inputs=[input_images, resolution_preset],
+        outputs=[width, height, resolution_preset],
+    )
+    
+    resolution_preset.change(
+        fn=on_resolution_preset_change,
+        inputs=[resolution_preset, input_images],
+        outputs=[width, height],
     )
     
     generate_btn.click(
         fn=generate_image,
         inputs=[
             prompt, height, width, steps, seed, guidance_scale, device,
-            model_choice, input_image, strength, lora_file, lora_strength
+            model_choice, input_images, lora_file, lora_strength
         ],
         outputs=[output_image, seed_info],
     )

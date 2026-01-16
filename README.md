@@ -5,19 +5,20 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 ## Features
 
 - **Image Generation:** Create images from text prompts
-- **Image Editing:** Upload and transform images with natural language
+- **Image Editing:** Upload up to 6 reference images and transform them with natural language
 - **Multiple Models:** FLUX.2-klein and Z-Image Turbo
-- **Quantized Models:** Low memory usage with int4/int8 quantization
+- **Quantized Models:** Low memory usage with 4bit/int8 quantization
 - **LoRA Support:** Load custom LoRA adapters with Z-Image Full model
 - **Cross-Platform:** Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
 
 ## Supported Models
 
-| Model | Size | Features | Speed |
+| Model | VRAM | Features | Speed |
 |-------|------|----------|-------|
-| FLUX.2-klein-4B (Int8) | 8GB | Text-to-image + Image editing | Fast |
-| Z-Image Turbo (Quantized) | 3.5GB | Text-to-image | Fastest |
-| Z-Image Turbo (Full) | 24GB | Text-to-image + LoRA | Slower |
+| FLUX.2-klein-4B (4bit SDNQ) | <8GB @ 512px, <16GB @ 1024px | Text-to-image + Image editing | Fast |
+| FLUX.2-klein-4B (Int8) | ~16GB | Text-to-image + Image editing | Fast |
+| Z-Image Turbo (Quantized) | ~8GB | Text-to-image | Fastest |
+| Z-Image Turbo (Full) | ~24GB | Text-to-image + LoRA | Slower |
 
 ## Quick Start (1-Click)
 
@@ -50,18 +51,17 @@ Then open http://localhost:7860 in your browser.
 
 ### Model Selection
 
-- **FLUX.2-klein-4B (Int8):** Default. Best for image editing and high-quality generation
-- **Z-Image Turbo (Quantized):** Fastest text-to-image, minimal memory
+- **FLUX.2-klein-4B (4bit SDNQ):** Default. Lowest memory, supports image editing
+- **FLUX.2-klein-4B (Int8):** Higher quality, more memory
+- **Z-Image Turbo (Quantized):** Fastest text-to-image, no image editing
 - **Z-Image Turbo (Full):** Use when you need LoRA support
 
 ### Image Editing (FLUX.2-klein)
 
-1. Select "FLUX.2-klein-4B (Int8)" from the model dropdown (default)
-2. Upload an image in the "Input Image" section
+1. Select a FLUX.2-klein model from the dropdown (default)
+2. Upload up to 6 images in the gallery
 3. Write a prompt describing the changes you want
-4. Adjust the "Strength" slider:
-   - Lower values (0.3-0.5): Subtle changes, keeps original structure
-   - Higher values (0.7-1.0): More dramatic changes
+4. Select output resolution (1024px, 1280px, or 1536px)
 5. Click Generate
 
 ### Command Line
@@ -81,7 +81,7 @@ Options:
 
 ## Benchmarks
 
-### FLUX.2-klein-4B (Int8)
+### FLUX.2-klein-4B
 
 | Hardware | Resolution | Steps | Time |
 |----------|------------|-------|------|
@@ -100,15 +100,16 @@ Options:
 
 | Model | RAM/VRAM Required |
 |-------|-------------------|
+| FLUX.2-klein (4bit SDNQ) | 8GB @ 512px, 16GB @ 1024px |
 | FLUX.2-klein (Int8) | 16GB |
-| Z-Image (Quantized) | 16GB |
-| Z-Image (Full) | 32GB+ |
+| Z-Image (Quantized) | 8GB |
+| Z-Image (Full) | 24GB+ |
 
 ## Credits
 
 - [FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) by Black Forest Labs
 - [Z-Image](https://github.com/Tongyi-MAI/Z-Image) by Alibaba
-- [SDNQ Quantization](https://huggingface.co/Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32) by Disty0
+- [SDNQ Quantization](https://huggingface.co/Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic) by Disty0
 - [Int8 Quantization](https://huggingface.co/aydin99/FLUX.2-klein-4B-int8) using optimum-quanto
 
 ## License

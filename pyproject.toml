@@ -21,6 +21,7 @@ dependencies = [
     "optimum-quanto>=0.2.7",
     "sdnq",
     "setuptools>=80.9.0",
+    "kernels>=0.11.7",
 ]
 
 [tool.uv]
