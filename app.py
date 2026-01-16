@@ -41,6 +41,7 @@ current_lora_path = None
 # Model choices
 MODEL_CHOICES = [
     "FLUX.2-klein-4B (4bit SDNQ - Low VRAM)",
+    "FLUX.2-klein-9B (4bit SDNQ - Higher Quality)",
     "FLUX.2-klein-4B (Int8)",
     "Z-Image Turbo (Quantized - Fast)",
     "Z-Image Turbo (Full - LoRA support)",
@@ -214,6 +215,44 @@ def load_flux2_klein_sdnq_pipeline(device="mps"):
     return pipe
 
 
+def load_flux2_klein_9b_sdnq_pipeline(device="mps"):
+    from sdnq import SDNQConfig
+    from diffusers import Flux2KleinPipeline
+    from transformers import AutoTokenizer
+    
+    print(f"Loading FLUX.2-klein-9B (4bit SDNQ) on {device}...")
+    print_memory("Before loading")
+    
+    print("  Loading tokenizer from base model...")
+    tokenizer = AutoTokenizer.from_pretrained(
+        "black-forest-labs/FLUX.2-klein-9B",
+        subfolder="tokenizer",
+        use_fast=False,
+    )
+    
+    pipe = Flux2KleinPipeline.from_pretrained(
+        "Disty0/FLUX.2-klein-9B-SDNQ-4bit-dynamic-svd-r32",
+        tokenizer=tokenizer,
+        torch_dtype=torch.bfloat16,
+    )
+    print_memory("After loading")
+    
+    pipe.to(device)
+    print_memory("After pipe.to(device)")
+    
+    pipe.enable_attention_slicing()
+    if hasattr(pipe, "enable_vae_slicing"):
+        pipe.enable_vae_slicing()
+    if hasattr(pipe, "enable_vae_tiling"):
+        pipe.enable_vae_tiling()
+    elif hasattr(getattr(pipe, "vae", None), "enable_tiling"):
+        pipe.vae.enable_tiling()
+    print_memory("After memory optimizations")
+    
+    print("  FLUX.2-klein-9B (SDNQ) ready!")
+    return pipe
+
+
 def load_pipeline(model_choice: str, device: str = "mps"):
     global pipe, current_device, current_model, current_lora_path
     
@@ -221,6 +260,8 @@ def load_pipeline(model_choice: str, device: str = "mps"):
         model_type = "zimage-quant"
     elif "Full" in model_choice:
         model_type = "zimage-full"
+    elif "9B" in model_choice and "SDNQ" in model_choice:
+        model_type = "flux2-klein-9b-sdnq"
     elif "4bit SDNQ" in model_choice:
         model_type = "flux2-klein-sdnq"
     elif "FLUX" in model_choice:
@@ -244,6 +285,8 @@ def load_pipeline(model_choice: str, device: str = "mps"):
         pipe = load_flux2_klein_pipeline(device)
     elif model_type == "flux2-klein-sdnq":
         pipe = load_flux2_klein_sdnq_pipeline(device)
+    elif model_type == "flux2-klein-9b-sdnq":
+        pipe = load_flux2_klein_9b_sdnq_pipeline(device)
     elif model_type == "zimage-full":
         pipe = load_zimage_pipeline(device, use_full_model=True)
     else:
@@ -345,7 +388,7 @@ def generate_image(
     print_memory("Before generation")
     
     with torch.inference_mode():
-        if current_model in ("flux2-klein-int8", "flux2-klein-sdnq"):
+        if current_model in ("flux2-klein-int8", "flux2-klein-sdnq", "flux2-klein-9b-sdnq"):
             images_to_process = None
             if input_images is not None and len(input_images) > 0:
                 img_w, img_h = int(width), int(height)
@@ -417,8 +460,9 @@ def generate_image(
     model_short = {
         "zimage-quant": "Z-Image (quant)",
         "zimage-full": "Z-Image (full)",
-        "flux2-klein-int8": "FLUX.2-klein (int8)",
-        "flux2-klein-sdnq": "FLUX.2-klein (4bit)",
+        "flux2-klein-int8": "FLUX.2-klein-4B (int8)",
+        "flux2-klein-sdnq": "FLUX.2-klein-4B (4bit)",
+        "flux2-klein-9b-sdnq": "FLUX.2-klein-9B (4bit)",
     }.get(current_model, current_model)
     
     return image, f"Seed: {seed} | Model: {model_short} | Mode: {mode} | Device: {device}{cfg_info}{lora_info}"

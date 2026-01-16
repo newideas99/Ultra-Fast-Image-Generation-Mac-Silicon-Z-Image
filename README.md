@@ -16,6 +16,7 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 | Model | VRAM | Features | Speed |
 |-------|------|----------|-------|
 | FLUX.2-klein-4B (4bit SDNQ) | <8GB @ 512px, <16GB @ 1024px | Text-to-image + Image editing | Fast |
+| FLUX.2-klein-9B (4bit SDNQ) | ~12GB @ 512px, ~20GB @ 1024px | Text-to-image + Image editing (Higher Quality) | Fast |
 | FLUX.2-klein-4B (Int8) | ~16GB | Text-to-image + Image editing | Fast |
 | Z-Image Turbo (Quantized) | ~8GB | Text-to-image | Fastest |
 | Z-Image Turbo (Full) | ~24GB | Text-to-image + LoRA | Slower |
@@ -52,7 +53,8 @@ Then open http://localhost:7860 in your browser.
 ### Model Selection
 
 - **FLUX.2-klein-4B (4bit SDNQ):** Default. Lowest memory, supports image editing
-- **FLUX.2-klein-4B (Int8):** Higher quality, more memory
+- **FLUX.2-klein-9B (4bit SDNQ):** Higher quality 9B model, more memory
+- **FLUX.2-klein-4B (Int8):** Alternative quantization, more memory
 - **Z-Image Turbo (Quantized):** Fastest text-to-image, no image editing
 - **Z-Image Turbo (Full):** Use when you need LoRA support
 
@@ -100,8 +102,9 @@ Options:
 
 | Model | RAM/VRAM Required |
 |-------|-------------------|
-| FLUX.2-klein (4bit SDNQ) | 8GB @ 512px, 16GB @ 1024px |
-| FLUX.2-klein (Int8) | 16GB |
+| FLUX.2-klein-4B (4bit SDNQ) | 8GB @ 512px, 16GB @ 1024px |
+| FLUX.2-klein-9B (4bit SDNQ) | 12GB @ 512px, 20GB @ 1024px |
+| FLUX.2-klein-4B (Int8) | 16GB |
 | Z-Image (Quantized) | 8GB |
 | Z-Image (Full) | 24GB+ |
 
