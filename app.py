@@ -477,6 +477,198 @@ def clear_lora():
     return None, "LoRA cleared"
 
 
+# =============================================================================
+# Storage Management Functions
+# =============================================================================
+
+# Models this app uses (HuggingFace repo IDs)
+KNOWN_MODELS = {
+    "aydin99/FLUX.2-klein-4B-int8": "FLUX.2-klein-4B (Int8)",
+    "black-forest-labs/FLUX.2-klein-4B": "FLUX.2-klein-4B (Base)",
+    "black-forest-labs/FLUX.2-klein-9B": "FLUX.2-klein-9B (Base)",
+    "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic": "FLUX.2-klein-4B (4bit SDNQ)",
+    "Disty0/FLUX.2-klein-9B-SDNQ-4bit-dynamic-svd-r32": "FLUX.2-klein-9B (4bit SDNQ)",
+    "Tongyi-MAI/Z-Image-Turbo": "Z-Image Turbo (Full)",
+    "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32": "Z-Image Turbo (Quantized)",
+    "filipstrand/Z-Image-Turbo-mflux-4bit": "Z-Image Turbo (mflux 4bit)",
+}
+
+
+def get_hf_cache_dir():
+    """Get HuggingFace cache directory."""
+    return os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+
+
+def get_dir_size(path):
+    """Get total size of a directory in bytes."""
+    total = 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(path):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                if os.path.isfile(fp):
+                    total += os.path.getsize(fp)
+    except Exception:
+        pass
+    return total
+
+
+def format_size(size_bytes):
+    """Format bytes to human readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 ** 2:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 ** 3:
+        return f"{size_bytes / 1024 ** 2:.1f} MB"
+    else:
+        return f"{size_bytes / 1024 ** 3:.2f} GB"
+
+
+def scan_downloaded_models():
+    """Scan HuggingFace cache for downloaded models used by this app."""
+    cache_dir = get_hf_cache_dir()
+    models = []
+    total_size = 0
+    
+    if not os.path.exists(cache_dir):
+        return [], "0 B"
+    
+    for repo_id, display_name in KNOWN_MODELS.items():
+        # Convert repo_id to cache folder name (owner--model)
+        cache_name = f"models--{repo_id.replace('/', '--')}"
+        model_path = os.path.join(cache_dir, cache_name)
+        
+        if os.path.exists(model_path):
+            size = get_dir_size(model_path)
+            total_size += size
+            models.append({
+                "repo_id": repo_id,
+                "display_name": display_name,
+                "cache_name": cache_name,
+                "path": model_path,
+                "size": size,
+                "size_str": format_size(size),
+            })
+    
+    models.sort(key=lambda x: x["size"], reverse=True)
+    
+    return models, format_size(total_size)
+
+
+def get_storage_display():
+    """Get formatted storage display for Gradio."""
+    models, total = scan_downloaded_models()
+    
+    if not models:
+        return "No models downloaded yet. Models will download on first use."
+    
+    lines = [f"**Total Storage Used: {total}**\n"]
+    lines.append("| Model | Size |")
+    lines.append("|-------|------|")
+    
+    for m in models:
+        lines.append(f"| {m['display_name']} | {m['size_str']} |")
+    
+    return "\n".join(lines)
+
+
+def get_model_choices_for_deletion():
+    """Get list of model choices for deletion dropdown."""
+    models, _ = scan_downloaded_models()
+    choices = []
+    for m in models:
+        choices.append(f"{m['display_name']} ({m['size_str']})")
+    return choices
+
+
+def delete_model(model_selection):
+    """Delete a specific model from cache."""
+    global pipe, current_model
+    
+    if not model_selection:
+        return get_storage_display(), get_model_choices_for_deletion(), "No model selected"
+    
+    models, _ = scan_downloaded_models()
+    
+    target = None
+    for m in models:
+        if model_selection.startswith(m['display_name']):
+            target = m
+            break
+    
+    if not target:
+        return get_storage_display(), get_model_choices_for_deletion(), f"Model not found: {model_selection}"
+    
+    # Unload pipeline if it's using this model
+    model_repo = target['repo_id'].lower()
+    if pipe is not None:
+        needs_unload = False
+        if "klein-4b" in model_repo and current_model and "4b" in current_model.lower():
+            needs_unload = True
+        elif "klein-9b" in model_repo and current_model and "9b" in current_model.lower():
+            needs_unload = True
+        elif "z-image" in model_repo.lower() and current_model and "zimage" in current_model.lower():
+            needs_unload = True
+        
+        if needs_unload:
+            del pipe
+            pipe = None
+            current_model = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+    
+    try:
+        shutil.rmtree(target['path'])
+        msg = f"Deleted: {target['display_name']} ({target['size_str']} freed)"
+        print(msg)
+    except Exception as e:
+        msg = f"Error deleting {target['display_name']}: {str(e)}"
+        print(msg)
+    
+    return get_storage_display(), get_model_choices_for_deletion(), msg
+
+
+def delete_all_models():
+    """Delete all downloaded models."""
+    global pipe, current_model, current_lora_path
+    
+    models, total = scan_downloaded_models()
+    
+    if not models:
+        return get_storage_display(), get_model_choices_for_deletion(), "No models to delete"
+    
+    if pipe is not None:
+        del pipe
+        pipe = None
+        current_model = None
+        current_lora_path = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    
+    deleted = []
+    errors = []
+    
+    for m in models:
+        try:
+            shutil.rmtree(m['path'])
+            deleted.append(m['display_name'])
+        except Exception as e:
+            errors.append(f"{m['display_name']}: {str(e)}")
+    
+    if errors:
+        msg = f"Deleted {len(deleted)} models. Errors: {'; '.join(errors)}"
+    else:
+        msg = f"Deleted {len(deleted)} models. {total} freed."
+    
+    print(msg)
+    return get_storage_display(), get_model_choices_for_deletion(), msg
+
+
 def calculate_dimensions_from_ratio(width: int, height: int, target_resolution: str) -> tuple:
     """Calculate output dimensions maintaining aspect ratio for target resolution."""
     if "1536" in target_resolution:
@@ -485,6 +677,8 @@ def calculate_dimensions_from_ratio(width: int, height: int, target_resolution: 
         target_size = 1280
     elif "2048" in target_resolution or "2K" in target_resolution:
         target_size = 2048
+    elif "512" in target_resolution:
+        target_size = 512
     else:
         target_size = 1024
     
@@ -516,7 +710,7 @@ def on_image_upload(images, current_preset):
     except Exception:
         return gr.update(visible=True), gr.update(visible=True), gr.update(visible=False, value="~1024px")
     
-    preset = current_preset if current_preset in ["~1024px", "~1280px", "~1536px (32GB+)"] else "~1024px"
+    preset = current_preset if current_preset in ["~512px", "~1024px", "~1280px", "~1536px (32GB+)"] else "~1024px"
     new_width, new_height = calculate_dimensions_from_ratio(img_width, img_height, preset)
     
     return (
@@ -603,7 +797,7 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
             )
 
             resolution_preset = gr.Radio(
-                choices=["~1024px", "~1280px", "~1536px (32GB+)"],
+                choices=["~512px", "~1024px", "~1280px", "~1536px (32GB+)"],
                 value="~1024px",
                 label="Output Resolution (longest side)",
                 info="Maintains your image's aspect ratio",
@@ -669,6 +863,23 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
         ],
         inputs=[prompt],
     )
+    
+    with gr.Accordion("Storage Management", open=False):
+        storage_display = gr.Markdown(value=get_storage_display())
+        
+        with gr.Row():
+            model_dropdown = gr.Dropdown(
+                choices=get_model_choices_for_deletion(),
+                label="Select Model to Delete",
+                scale=3,
+            )
+            delete_btn = gr.Button("Delete Selected", variant="secondary", scale=1)
+        
+        with gr.Row():
+            refresh_btn = gr.Button("Refresh", scale=1)
+            delete_all_btn = gr.Button("Delete ALL Models", variant="stop", scale=1)
+        
+        storage_status = gr.Textbox(label="Status", interactive=False)
 
     # Event handlers
     model_choice.change(
@@ -707,6 +918,25 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
         fn=update_lora_strength,
         inputs=[lora_strength],
         outputs=[seed_info],
+    )
+    
+    def refresh_storage():
+        return get_storage_display(), get_model_choices_for_deletion(), ""
+    
+    refresh_btn.click(
+        fn=refresh_storage,
+        outputs=[storage_display, model_dropdown, storage_status],
+    )
+    
+    delete_btn.click(
+        fn=delete_model,
+        inputs=[model_dropdown],
+        outputs=[storage_display, model_dropdown, storage_status],
+    )
+    
+    delete_all_btn.click(
+        fn=delete_all_models,
+        outputs=[storage_display, model_dropdown, storage_status],
     )
 
 
