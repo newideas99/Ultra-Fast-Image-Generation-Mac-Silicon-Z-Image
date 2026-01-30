@@ -19,6 +19,9 @@ import json
 import atexit
 import shutil
 import tempfile
+from datetime import datetime
+
+DEFAULT_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "ultra-fast-image-gen")
 
 
 def cleanup_gradio_cache():
@@ -363,7 +366,9 @@ def generate_image(
     model_choice,
     input_images,
     lora_file, 
-    lora_strength
+    lora_strength,
+    auto_save,
+    output_dir
 ):
     global pipe
     
@@ -465,7 +470,13 @@ def generate_image(
         "flux2-klein-9b-sdnq": "FLUX.2-klein-9B (4bit)",
     }.get(current_model, current_model)
     
-    return image, f"Seed: {seed} | Model: {model_short} | Mode: {mode} | Device: {device}{cfg_info}{lora_info}"
+    info = f"Seed: {seed} | Model: {model_short} | Mode: {mode} | Device: {device}{cfg_info}{lora_info}"
+    
+    if auto_save:
+        save_result = save_image(image, output_dir, prompt)
+        info += f" | {save_result}"
+    
+    return image, info
 
 
 def clear_lora():
@@ -475,6 +486,36 @@ def clear_lora():
         pipe.unload_lora_weights()
         current_lora_path = None
     return None, "LoRA cleared"
+
+
+# =============================================================================
+# Output/Save Functions
+# =============================================================================
+
+def get_output_dir(custom_dir=None):
+    """Get output directory, creating if needed."""
+    output_dir = custom_dir.strip() if custom_dir and custom_dir.strip() else DEFAULT_OUTPUT_DIR
+    output_dir = os.path.expanduser(output_dir)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+    return output_dir
+
+
+def save_image(image, output_dir=None, prompt=""):
+    """Save image to output directory."""
+    if image is None:
+        return "No image to save"
+    
+    output_dir = get_output_dir(output_dir)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prompt_slug = ""
+    if prompt:
+        prompt_slug = "_" + "".join(c if c.isalnum() else "_" for c in prompt[:30]).strip("_")
+    
+    filename = f"{timestamp}{prompt_slug}.png"
+    filepath = os.path.join(output_dir, filename)
+    image.save(filepath, "PNG")
+    return f"Saved: {filepath}"
 
 
 # =============================================================================
@@ -852,18 +893,14 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
         with gr.Column(scale=1):
             output_image = gr.Image(label="Generated Image", type="pil")
 
-    # Examples
-    gr.Examples(
-        examples=[
-            ["A majestic mountain landscape at sunset, dramatic lighting, cinematic"],
-            ["Portrait of a young woman, soft studio lighting, professional photography"],
-            ["Cyberpunk city street at night, neon lights, rain reflections"],
-            ["A cute cat wearing a tiny hat, studio photo, soft lighting"],
-            ["Abstract art, vibrant colors, fluid shapes, modern design"],
-        ],
-        inputs=[prompt],
-    )
-    
+    with gr.Accordion("Save Settings", open=False):
+        auto_save = gr.Checkbox(label="Auto-save generated images", value=False)
+        output_dir = gr.Textbox(label="Output Directory", value=DEFAULT_OUTPUT_DIR)
+        with gr.Row():
+            save_btn = gr.Button("Save Current Image")
+            open_folder_btn = gr.Button("Open Output Folder")
+        save_status = gr.Textbox(label="Save Status", interactive=False)
+
     with gr.Accordion("Storage Management", open=False):
         storage_display = gr.Markdown(value=get_storage_display())
         
@@ -880,6 +917,17 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
             delete_all_btn = gr.Button("Delete ALL Models", variant="stop", scale=1)
         
         storage_status = gr.Textbox(label="Status", interactive=False)
+
+    gr.Examples(
+        examples=[
+            ["A majestic mountain landscape at sunset, dramatic lighting, cinematic"],
+            ["Portrait of a young woman, soft studio lighting, professional photography"],
+            ["Cyberpunk city street at night, neon lights, rain reflections"],
+            ["A cute cat wearing a tiny hat, studio photo, soft lighting"],
+            ["Abstract art, vibrant colors, fluid shapes, modern design"],
+        ],
+        inputs=[prompt],
+    )
 
     # Event handlers
     model_choice.change(
@@ -904,9 +952,34 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
         fn=generate_image,
         inputs=[
             prompt, height, width, steps, seed, guidance_scale, device,
-            model_choice, input_images, lora_file, lora_strength
+            model_choice, input_images, lora_file, lora_strength,
+            auto_save, output_dir
         ],
         outputs=[output_image, seed_info],
+    )
+    
+    def manual_save(image, out_dir, prompt_text):
+        if image is None:
+            return "No image to save"
+        result = save_image(image, out_dir, prompt_text)
+        return result
+    
+    save_btn.click(
+        fn=manual_save,
+        inputs=[output_image, output_dir, prompt],
+        outputs=[save_status],
+    )
+    
+    def open_output_folder(out_dir):
+        import subprocess
+        folder = get_output_dir(out_dir)
+        subprocess.run(["open", folder])
+        return f"Opened: {folder}"
+    
+    open_folder_btn.click(
+        fn=open_output_folder,
+        inputs=[output_dir],
+        outputs=[save_status],
     )
 
     clear_lora_btn.click(
