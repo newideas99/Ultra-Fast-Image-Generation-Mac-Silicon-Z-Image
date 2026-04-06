@@ -10,7 +10,13 @@ FLUX.2-klein also supports image-to-image editing!
 """
 
 import os
+
 os.environ["PYTORCH_MPS_FAST_MATH"] = "1"
+
+from dotenv import load_dotenv
+load_dotenv()
+
+HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
 
 import torch
 import gradio as gr
@@ -170,6 +176,7 @@ def load_flux2_klein_pipeline(device="mps"):
         text_encoder=None,
         tokenizer=None,
         torch_dtype=torch.bfloat16,
+        token=HF_TOKEN,
     )
     print_memory("After VAE/scheduler download")
     
@@ -206,6 +213,7 @@ def load_flux2_klein_sdnq_pipeline(device="mps"):
         "black-forest-labs/FLUX.2-klein-4B",
         subfolder="tokenizer",
         use_fast=False,
+        token=HF_TOKEN,
     )
     
     pipe = Flux2KleinPipeline.from_pretrained(
@@ -244,6 +252,7 @@ def load_flux2_klein_9b_sdnq_pipeline(device="mps"):
         "black-forest-labs/FLUX.2-klein-9B",
         subfolder="tokenizer",
         use_fast=False,
+        token=HF_TOKEN,
     )
     
     pipe = Flux2KleinPipeline.from_pretrained(

@@ -13,3 +13,4 @@ pillow
 peft>=0.17.0
 scipy
 optimum-quanto>=0.2.7
+python-dotenv

@@ -34,3 +34,6 @@ flagged/
 
 # Local agent metadata
 .serena/
+
+# Environment variables
+.env
