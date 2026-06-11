@@ -56,8 +56,8 @@ def main():
     }
 
     # Install OpenCode Skill
-    source_skill_dir = (Path(__file__).parent.parent / ".opencode" / "skills" / "website-visual-assets").resolve()
-    target_skill_dir = Path.home() / ".config" / "opencode" / "skills" / "website-visual-assets"
+    source_skill_dir = (Path(__file__).parent.parent / ".opencode" / "skills" / "ultra-fast-image-gen-mcp").resolve()
+    target_skill_dir = Path.home() / ".config" / "opencode" / "skills" / "ultra-fast-image-gen-mcp"
 
     if source_skill_dir.exists():
         if target_skill_dir.exists():

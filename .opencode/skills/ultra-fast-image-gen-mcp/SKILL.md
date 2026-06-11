@@ -1,4 +1,4 @@
-# Website Visual Assets Skill (Image Generation & Editing)
+# Ultra Fast Image Gen MCP (Image Generation & Editing)
 
 Use this skill when the user asks to create, generate, edit, transform, or add visual assets (images, banners, icons, backgrounds) to a website project.
 
