@@ -1,0 +1,17 @@
+{
+  "$schema": "https://shadcn-vue.com/schema.json",
+  "style": "default",
+  "typescript": true,
+  "tsConfigPath": ".vitepress/tsconfig.json",
+  "tailwind": {
+    "config": "tailwind.config.js",
+    "css": ".vitepress/theme/style.css",
+    "baseColor": "green",
+    "cssVariables": true
+  },
+  "framework": "vitepress",
+  "aliases": {
+    "components": ".vitepress/components",
+    "utils": ".vitepress/lib/utils"
+  }
+}

@@ -6,6 +6,8 @@ __pycache__/
 .Python
 venv/
 env/
+docs-site/node_modules/
+docs-site/.vitepress/cache/
 .venv/
 
 # IDE

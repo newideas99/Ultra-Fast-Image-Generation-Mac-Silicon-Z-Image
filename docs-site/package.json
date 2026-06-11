@@ -1,0 +1,23 @@
+{
+  "name": "docs-site",
+  "version": "1.0.0",
+  "description": "Ultra Fast Image Gen Documentation",
+  "type": "module",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.0",
+    "lucide-vue-next": "^0.378.0",
+    "tailwind-merge": "^2.2.2"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "vitepress": "^1.1.4"
+  }
+}
