@@ -43,10 +43,10 @@ mcp = FastMCP("Ultra Fast Image Gen")
 def generate_image(
     prompt: str,
     output_path: str,
-    model: str = "flux2-9b-sdnq",
+    model: str = "zimage-quant",
     width: int = 512,
     height: int = 512,
-    steps: int = 28,
+    steps: int = 5,
     guidance: float = 3.5,
 ) -> str:
     """
@@ -56,11 +56,12 @@ def generate_image(
     Args:
         prompt: Detailed text description (style, lighting, composition, aspect ratio).
         output_path: Target file path (e.g., 'public/images/banner.png', 'src/assets/hero.jpg').
-        model: 'flux2-9b-sdnq' (highest quality, default), 'flux2-4b-sdnq'/'flux2-4b-int8' (faster), 
-               'zimage-quant' (ultra-fast), 'zimage-full' (LoRA), or 'anima'.
+        model: 'zimage-quant' (ultra-fast, lowest memory, default), 'flux2-4b-sdnq' (high quality), 
+               'flux2-9b-sdnq' (highest quality), 'flux2-4b-int8', 'zimage-full' (LoRA), or 'anima'.
+               Default is zimage-quant for speed. Ask for flux2-4b-sdnq or flux2-9b-sdnq for higher quality.
         width: Image width in pixels (e.g., 1024 for banners, 512 for icons).
         height: Image height in pixels (e.g., 512 for banners, 512 for icons).
-        steps: Inference steps (28 for flux/anima, 5 for zimage).
+        steps: Inference steps (5 for zimage, 28 for flux/anima).
         guidance: Classifier-free guidance scale (default 3.5, ignored by zimage).
     
     Returns:

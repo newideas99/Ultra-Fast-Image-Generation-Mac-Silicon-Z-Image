@@ -78,10 +78,17 @@ To ensure your AI agent uses the tools effectively, add this to your project's `
 ```markdown
 ## Image Generation & Editing
 When asked to create or modify visual assets (e.g., "generate a hero banner", "make the logo background dark"), use the `generate_image` or `edit_image` tools from the `ultra-fast-image-gen` MCP server. 
-- Default to `model="flux2-9b-sdnq"` for highest quality, or `model="zimage-quant"` for rapid prototyping.
+- Default model is `zimage-quant` (ultra-fast, lowest memory). 
+- Ask for `model="flux2-4b-sdnq"` for high quality, or `model="flux2-9b-sdnq"` for highest quality.
 - Always save outputs to logical project paths (e.g., `public/images/hero.png` or `src/assets/icon.svg`).
 - For image editing, provide 1-6 existing image paths in the `input_image_paths` array.
 ```
+
+### 4. No Environment Variables Needed
+
+The MCP server works out of the box — no `HF_TOKEN` or other environment variables are required for image generation. Model weights are downloaded once to the local Hugging Face cache and reused on subsequent runs.
+
+> **Note:** `HF_TOKEN` is only needed if you're accessing gated models (like the uncensored text encoder). For standard FLUX.2-klein, Z-Image Turbo, and Anima models, no token is required.
 
 ---
 

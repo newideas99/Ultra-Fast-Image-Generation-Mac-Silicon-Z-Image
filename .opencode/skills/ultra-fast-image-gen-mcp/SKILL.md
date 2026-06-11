@@ -68,7 +68,7 @@ Use `generate_image` when the user wants a new asset from scratch.
 4. **Call `generate_image` Tool**:
    - `prompt`: Your crafted detailed prompt.
    - `output_path`: The project-relative or absolute path.
-   - `model`: `"zimage-quant"` (fastest, good for drafts/icons), `"flux2-4b-sdnq"` (high quality, recommended for final assets), or `"flux2-9b-sdnq"` (highest quality). **Must match RAM limits.**
+   - `model`: `"zimage-quant"` (ultra-fast, lowest memory, **default**). Use `"flux2-4b-sdnq"` for high quality or `"flux2-9b-sdnq"` for highest quality — but only if user explicitly requests higher quality AND RAM allows. **Must match RAM limits.**
    - `width` / `height`: `1024`x`512` (standard banner), `512`x`512` (square/icon), `512`x`768` (portrait/mobile). **Must match RAM limits.**
    - `steps`: `5` (for zimage), `28` (for flux).
 5. **Verify & Inject**: 
@@ -110,7 +110,7 @@ Use `edit_image` when the user wants to modify an *existing* asset (e.g., "chang
 **Agent Action**:
 1. Path: `public/images/headphone-banner.png`
 2. Prompt: "Professional product photography of sleek modern wireless headphones, floating in mid-air, dramatic studio lighting, dark gradient background, high resolution, 16:9 aspect ratio, leaving empty space on the right for text overlay"
-3. Tool Call: `generate_image(prompt="...", output_path="public/images/headphone-banner.png", model="flux2-4b-sdnq", width=1024, height=512, steps=28)`
+3. Tool Call: `generate_image(prompt="...", output_path="public/images/headphone-banner.png", model="zimage-quant", width=1024, height=512, steps=5)`
 4. Update code: `<img src="/images/headphone-banner.png" alt="Modern wireless headphones" className="w-full h-auto object-cover" />`
 5. Reply: "Generated the headphone banner, saved to `public/images/headphone-banner.png`, and updated the homepage hero section."
 
@@ -127,8 +127,8 @@ Use `edit_image` when the user wants to modify an *existing* asset (e.g., "chang
 
 ## Best Practices
 - **Check RAM before every generation session** — run the psutil command and enforce limits. Never skip this step.
+- **Default to `zimage-quant`** — use this for all generation unless the user explicitly requests higher quality. It's the fastest and lowest memory option.
 - **Always use absolute or clearly resolved relative paths** for `output_path` and `input_image_paths` to avoid file system errors.
-- **Prefer `flux2-4b-sdnq`** for final website assets due to its superior prompt adherence and quality. Use `zimage-quant` only for rapid prototyping or simple icons.
 - **Never hallucinate image generation success**. Always wait for the MCP tool's explicit success response before updating the code.
 - **Ensure directory existence**: The MCP tool creates the output directory automatically, but verify the path makes sense for the framework (e.g., `public/` or `static/` for Next.js/Vite).
 - **Track session count** — keep a mental tally of how many images you've generated in the current session. Stop when you hit the RAM-based limit.
