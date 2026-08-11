@@ -664,6 +664,19 @@ def _decode_images(data_urls):
     return images
 
 
+def _dims_matching_aspect(img, width, height, multiple=16, lo=64, hi=2048):
+    """Output dims matching img's aspect ratio, using width*height as the
+    pixel budget. Snapped to `multiple` (FLUX dims must be divisible by 16)."""
+    aspect = img.width / img.height
+    target_h = (width * height / aspect) ** 0.5
+    target_w = target_h * aspect
+
+    def _snap(v):
+        return int(max(lo, min(hi, round(v / multiple) * multiple)))
+
+    return _snap(target_w), _snap(target_h)
+
+
 def _supports_step_callback(pipe):
     try:
         return "callback_on_step_end" in inspect.signature(pipe.__call__).parameters
@@ -691,11 +704,10 @@ def _run_diffusers(job, model_id, p):
     base_seed = int(base_seed)
 
     if input_images:
-        resized = []
-        for img in input_images:
-            r = img.copy().resize((width, height), Image.LANCZOS)
-            resized.append(r.convert("RGB"))
-        input_images = resized
+        # Keep the first input's aspect ratio instead of stretching to the
+        # requested square; the requested size only sets the pixel budget.
+        width, height = _dims_matching_aspect(input_images[0], width, height)
+        input_images = [img.resize((width, height), Image.LANCZOS) for img in input_images]
         if hasattr(pipe, "vae") and hasattr(pipe.vae, "disable_tiling"):
             pipe.vae.disable_tiling()
 
